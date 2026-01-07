@@ -16,3 +16,5 @@ How to use:
 3. Implement concrete data connectors, models, and execution logic.
 
 This scaffold is intended as a starting point.
+
+See `docs/requirements.md` for detailed requirements and success metrics.

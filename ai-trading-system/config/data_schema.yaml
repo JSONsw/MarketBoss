@@ -1,0 +1,43 @@
+required_fields:
+  - timestamp
+  - symbol
+  - open
+  - high
+  - low
+  - close
+  - volume
+
+unique_key:
+  - timestamp
+  - symbol
+
+ranges:
+  price:
+    min: 0.0
+    max: 10000000.0
+  volume:
+    min: 0
+    max: 1e12
+
+fields:
+  timestamp:
+    type: str
+    nullable: false
+  symbol:
+    type: str
+    nullable: false
+  open:
+    type: float
+    nullable: false
+  high:
+    type: float
+    nullable: false
+  low:
+    type: float
+    nullable: false
+  close:
+    type: float
+    nullable: false
+  volume:
+    type: int
+    nullable: false

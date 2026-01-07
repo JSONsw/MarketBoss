@@ -1,5 +1,6 @@
 """Common decorators used across the project."""
 
+
 def retry(times: int = 3):
     def decorator(fn):
         def wrapper(*args, **kwargs):
@@ -10,5 +11,7 @@ def retry(times: int = 3):
                 except Exception as e:
                     last = e
             raise last
+
         return wrapper
+
     return decorator
