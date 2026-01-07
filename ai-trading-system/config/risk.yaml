@@ -1,0 +1,4 @@
+risk:
+  max_drawdown: 0.2
+  max_position_size: 0.02
+  daily_loss_limit: 0.01

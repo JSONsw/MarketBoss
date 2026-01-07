@@ -1,0 +1,8 @@
+model:
+  name: xgboost-default
+  version: 0.1
+  save_path: ../../models/
+  training:
+    n_estimators: 100
+    max_depth: 6
+    learning_rate: 0.1

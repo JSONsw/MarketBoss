@@ -1,0 +1,6 @@
+app_name: ai-trading-system
+version: 0.1.0
+environment: development
+logging:
+  level: INFO
+  path: ../logs/

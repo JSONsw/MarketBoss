@@ -1,0 +1,7 @@
+assets:
+  - symbol: AAPL
+    exchange: NASDAQ
+    data_source: yahoo
+  - symbol: SPY
+    exchange: ARCA
+    data_source: yahoo
