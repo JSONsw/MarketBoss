@@ -1,0 +1,23 @@
+2026-01-07T15:51:44.079191Z | ERROR | Validation failed: missing fields ['close']
+2026-01-07T15:51:58.379286Z | ERROR | Validation failed: missing fields ['close']
+2026-01-07T15:54:26.764422Z | ERROR | Validation failed: missing fields ['close']
+2026-01-07T16:15:48.243739Z | CRITICAL | Failed to load schema
+2026-01-07T16:19:33.299646Z | ERROR | Validation failed: missing fields ['close']
+2026-01-07T16:22:40.361557Z | ERROR | Validation failed: missing fields ['close']
+2026-01-07T16:25:11.438636Z | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-07T16:25:20.612542Z | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-07T16:25:20.707096Z | ERROR | Validation failed: missing fields ['close']
+2026-01-07T16:26:58.650556Z | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-07T16:26:58.739793Z | ERROR | Validation failed: missing fields ['close']
+2026-01-07T17:36:21.373537Z | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-07T17:36:21.495936Z | ERROR | Validation failed: missing fields ['close']
+2026-01-07T17:38:19.075351+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-07T17:38:19.175531+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-07T17:45:02.637903+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-07T17:45:02.736768+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-07T17:49:17.988549+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-07T17:49:18.091564+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-07T17:50:10.587974+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-07T17:50:10.691136+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-07T17:51:50.444786+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-07T17:51:50.548757+00:00 | ERROR | Validation failed: missing fields ['close']

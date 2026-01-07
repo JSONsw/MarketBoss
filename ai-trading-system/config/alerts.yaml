@@ -1,0 +1,16 @@
+webhook:
+  url: ""
+  headers: {}
+  retries: 3
+  backoff_seconds: 1
+
+email:
+  smtp_server: ""
+  port: 587
+  username: ""
+  password: ""
+  to_address: ""
+
+pushgateway:
+  url: ""
+  job: "ai_trading_system"

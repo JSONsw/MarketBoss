@@ -4,3 +4,6 @@ scikit-learn
 xgboost
 pyyaml
 pytest
+requests
+prometheus-client
+flake8
