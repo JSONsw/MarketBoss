@@ -5,3 +5,6 @@ xgboost
 pyyaml
 pytest
 pytest-cov
+requests
+prometheus-client
+flake8

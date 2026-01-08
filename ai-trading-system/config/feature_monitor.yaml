@@ -1,0 +1,4 @@
+default_threshold: 0.2
+features:
+  return: 0.15
+  ma_3: 0.25

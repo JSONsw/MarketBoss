@@ -1,0 +1,46 @@
+name: Tuner CI
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/models/**'
+      - 'scripts/run_tuner.py'
+
+jobs:
+  run-tuner:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tuner
+        run: |
+          python scripts/run_tuner.py
+
+      - name: Upload tuning results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tuning-results
+          path: |
+            models/tuning_results.json
+            models/artifacts/**
