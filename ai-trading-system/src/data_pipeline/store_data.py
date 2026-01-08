@@ -91,24 +91,22 @@ def update_schema(schema_path: str, metadata: dict):
 
 def validate_outliers(data: pd.DataFrame, threshold: float = 3.0) -> List[str]:
     """
-    Detect outliers beyond a given z-score threshold.
-    Only considers numeric columns for outlier detection.
+    Detect outliers using the Interquartile Range (IQR) method.
     Returns a list of column names with outliers detected.
     """
-    # Filter numeric columns
-    numeric_data = data.select_dtypes(include=["number"])
-    print(
-        f"Numeric columns for outlier detection: {numeric_data.columns.tolist()}"
-    )  # Debug print
+    numeric_data = data.select_dtypes(include=['number'])
+    print(f"Numeric columns for outlier detection: {numeric_data.columns.tolist()}")  # Debug print
 
-    # Calculate Z-scores
-    z_scores = (numeric_data - numeric_data.mean()) / numeric_data.std()
-    print(f"Z-scores: {z_scores}")  # Debug print
+    outlier_columns = []
+    for col in numeric_data.columns:
+        q1 = numeric_data[col].quantile(0.25)  # 25th percentile
+        q3 = numeric_data[col].quantile(0.75)  # 75th percentile
+        iqr = q3 - q1  # Interquartile range
+        lower_bound = q1 - threshold * iqr
+        upper_bound = q3 + threshold * iqr
+        if (numeric_data[col] < lower_bound).any() or (numeric_data[col] > upper_bound).any():
+            outlier_columns.append(col)
 
-    # Identify columns with outliers
-    outlier_columns = [
-        col for col in z_scores.columns if z_scores[col].abs().max() > threshold
-    ]
     return outlier_columns
 
 

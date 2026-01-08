@@ -54,3 +54,23 @@
 2026-01-08T16:19:53.798293+00:00 | ERROR | Validation failed: missing fields ['close']
 2026-01-08T16:21:31.655593+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
 2026-01-08T16:21:31.826837+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-08T16:26:42.667547+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-08T16:26:42.791566+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-08T16:31:45.210733+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-08T16:31:45.380761+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-08T16:31:45.416379+00:00 | ERROR | Validation failed: missing fields []
+2026-01-08T16:31:45.425268+00:00 | ERROR | Validation failed: missing fields ['symbol', 'timestamp']
+2026-01-08T16:31:45.434763+00:00 | ERROR | Type validation failed for fields: [('open', 'str')]
+2026-01-08T16:31:45.737216+00:00 | CRITICAL | Failed to load schema
+2026-01-08T16:34:26.528720+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-08T16:34:26.661885+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-08T16:34:26.685601+00:00 | ERROR | Validation failed: missing fields []
+2026-01-08T16:34:26.694787+00:00 | ERROR | Validation failed: missing fields ['symbol', 'timestamp']
+2026-01-08T16:34:26.705045+00:00 | ERROR | Type validation failed for fields: [('open', 'str')]
+2026-01-08T16:34:26.727123+00:00 | CRITICAL | Failed to load schema
+2026-01-08T16:38:29.403757+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-08T16:38:29.518481+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-08T16:38:29.541437+00:00 | ERROR | Validation failed: missing fields []
+2026-01-08T16:38:29.551361+00:00 | ERROR | Validation failed: missing fields ['symbol', 'timestamp']
+2026-01-08T16:38:29.559260+00:00 | ERROR | Type validation failed for fields: [('open', 'str')]
+2026-01-08T16:38:29.592010+00:00 | CRITICAL | Failed to load schema
