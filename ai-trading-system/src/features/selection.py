@@ -33,8 +33,7 @@ def _corr_importance(
             mean_y = sum(yy for yy in y if yy is not None) / n
             num = sum((a - mean_x) * (b - mean_y) for a, b in zip(xf, y))
             den = math.sqrt(
-                sum((a - mean_x) ** 2 for a in xf)
-                * sum((b - mean_y) ** 2 for b in y)
+                sum((a - mean_x) ** 2 for a in xf) * sum((b - mean_y) ** 2 for b in y)
             )
             corr = num / den if den != 0 else 0.0
         except Exception:
@@ -65,11 +64,7 @@ def feature_importance(
             )
             arrY = _np.array(
                 [
-                    (
-                        row.get(target_name)
-                        if row.get(target_name) is not None
-                        else 0.0
-                    )
+                    (row.get(target_name) if row.get(target_name) is not None else 0.0)
                     for row in X
                 ]
             )
@@ -82,9 +77,7 @@ def feature_importance(
     return _corr_importance(X, feature_names, target_name)
 
 
-def select_top_features(
-    importances: List[Tuple[str, float]], k: int
-) -> List[str]:
+def select_top_features(importances: List[Tuple[str, float]], k: int) -> List[str]:
     return [f for f, _ in importances[:k]]
 
 

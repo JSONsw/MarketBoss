@@ -42,9 +42,7 @@ def test_gap_opening_scenario():
         ),
     ]
 
-    _assert_basic_results(
-        signals, prices, slippage_bp=10.0, commission_pct=0.0002
-    )
+    _assert_basic_results(signals, prices, slippage_bp=10.0, commission_pct=0.0002)
 
 
 def test_liquidity_drought():
@@ -69,9 +67,7 @@ def test_liquidity_drought():
             )
         )
 
-    _assert_basic_results(
-        signals, prices, slippage_bp=15.0, commission_pct=0.0003
-    )
+    _assert_basic_results(signals, prices, slippage_bp=15.0, commission_pct=0.0003)
 
 
 def test_large_spike_series():
@@ -111,9 +107,7 @@ def test_large_spike_series():
         ),
     ]
 
-    _assert_basic_results(
-        signals, prices, slippage_bp=25.0, commission_pct=0.0005
-    )
+    _assert_basic_results(signals, prices, slippage_bp=25.0, commission_pct=0.0005)
 
 
 def test_mean_reversion_stress():
@@ -136,7 +130,7 @@ def test_mean_reversion_stress():
         length=80,
         avg=400.0,
         std=100.0,
-        )
+    )
 
     signals = [
         (
@@ -159,6 +153,4 @@ def test_mean_reversion_stress():
         ),
     ]
 
-    _assert_basic_results(
-        signals, prices, slippage_bp=8.0, commission_pct=0.0002
-    )
+    _assert_basic_results(signals, prices, slippage_bp=8.0, commission_pct=0.0002)

@@ -19,13 +19,9 @@ def _git_info() -> Dict[str, Any]:
         # lightweight git info capture
         import subprocess
 
-        sha = (
-            subprocess.check_output(["git", "rev-parse", "HEAD"]) .decode()
-        ).strip()
+        sha = (subprocess.check_output(["git", "rev-parse", "HEAD"]).decode()).strip()
         branch = (
-            subprocess.check_output(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"]
-            )
+            subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"])
             .decode()
             .strip()
         )

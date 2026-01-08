@@ -8,3 +8,4 @@ pytest-cov
 requests
 prometheus-client
 flake8
+tenacity

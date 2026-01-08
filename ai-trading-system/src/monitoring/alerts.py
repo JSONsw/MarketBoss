@@ -43,9 +43,7 @@ def send_webhook(
     headers = headers or {"Content-Type": "application/json"}
     try:
         if requests is not None:
-            resp = requests.post(
-                url, json=payload, headers=headers, timeout=timeout
-            )
+            resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
             return resp.status_code < 400
         # fallback to urllib
         from urllib import request as _request

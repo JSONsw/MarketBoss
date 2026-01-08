@@ -7,8 +7,18 @@ def test_e2e_backtest_flow():
 
     # Market ticks (prices across 12 ticks)
     prices = [
-        100.0, 100.2, 100.5, 100.3, 100.8, 101.0,
-        100.7, 100.9, 101.2, 101.0, 100.6, 100.4,
+        100.0,
+        100.2,
+        100.5,
+        100.3,
+        100.8,
+        101.0,
+        100.7,
+        100.9,
+        101.2,
+        101.0,
+        100.6,
+        100.4,
     ]
 
     # Signals attach to ticks; include an order that exceeds available_volume

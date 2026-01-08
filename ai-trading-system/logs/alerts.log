@@ -21,3 +21,36 @@
 2026-01-07T17:50:10.691136+00:00 | ERROR | Validation failed: missing fields ['close']
 2026-01-07T17:51:50.444786+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
 2026-01-07T17:51:50.548757+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-08T15:50:43.445708+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-08T15:50:43.575958+00:00 | CRITICAL | Time-series validation failed
+2026-01-08T15:50:44.092394+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-08T15:58:55.854097+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-08T15:58:55.943307+00:00 | CRITICAL | Time-series validation failed
+2026-01-08T15:58:56.221058+00:00 | CRITICAL | Time-series validation failed
+2026-01-08T15:58:56.235379+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-08T16:02:37.031878+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-08T16:02:37.109498+00:00 | CRITICAL | Time-series validation failed
+2026-01-08T16:02:37.401019+00:00 | CRITICAL | Time-series validation failed
+2026-01-08T16:02:37.414176+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-08T16:03:22.641383+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-08T16:03:22.720788+00:00 | CRITICAL | Time-series validation failed
+2026-01-08T16:03:22.991304+00:00 | CRITICAL | Time-series validation failed
+2026-01-08T16:03:23.004856+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-08T16:10:39.029403+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-08T16:10:39.182250+00:00 | CRITICAL | Time-series validation failed
+2026-01-08T16:10:39.668151+00:00 | CRITICAL | Time-series validation failed
+2026-01-08T16:10:39.685708+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-08T16:10:50.999128+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-08T16:10:51.082058+00:00 | CRITICAL | Time-series validation failed
+2026-01-08T16:10:51.356004+00:00 | CRITICAL | Time-series validation failed
+2026-01-08T16:10:51.367679+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-08T16:16:12.943202+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-08T16:16:13.028004+00:00 | CRITICAL | Time-series validation failed
+2026-01-08T16:16:13.320609+00:00 | CRITICAL | Time-series validation failed
+2026-01-08T16:16:13.332969+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-08T16:18:14.731813+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-08T16:18:16.372940+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-08T16:19:53.655323+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-08T16:19:53.798293+00:00 | ERROR | Validation failed: missing fields ['close']
+2026-01-08T16:21:31.655593+00:00 | WARNING | Feature drift detected for return: baseline_mean=0.015000 current_mean=0.550000 rel_change=35.667
+2026-01-08T16:21:31.826837+00:00 | ERROR | Validation failed: missing fields ['close']

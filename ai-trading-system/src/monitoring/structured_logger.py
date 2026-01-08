@@ -3,6 +3,7 @@
 This is a tiny wrapper around the standard `logging` module that emits
 JSON-like dicts via `logger.info()` for easy capture in tests and CI.
 """
+
 import json
 import logging
 from typing import Any, Dict

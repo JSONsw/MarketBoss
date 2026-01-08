@@ -13,13 +13,8 @@ def sma(values: List[float], window: int) -> List[Optional[float]]:
         if i + 1 < window:
             out.append(None)
             continue
-    window_vals = [
-        v for v in values[i - window + 1: i + 1]
-        if v is not None
-    ]
-    out.append(
-            sum(window_vals) / len(window_vals) if window_vals else None
-        )
+    window_vals = [v for v in values[i - window + 1 : i + 1] if v is not None]
+    out.append(sum(window_vals) / len(window_vals) if window_vals else None)
     return out
 
 
@@ -58,8 +53,8 @@ def rsi(values: List[float], window: int = 14) -> List[Optional[float]]:
             out[i] = None
             continue
         if i == window:
-            avg_gain = sum(gains[1:window + 1]) / window
-            avg_loss = sum(losses[1:window + 1]) / window
+            avg_gain = sum(gains[1 : window + 1]) / window
+            avg_loss = sum(losses[1 : window + 1]) / window
         else:
             avg_gain = (avg_gain * (window - 1) + gains[i]) / window
             avg_loss = (avg_loss * (window - 1) + losses[i]) / window

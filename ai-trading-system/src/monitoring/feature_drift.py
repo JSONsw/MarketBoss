@@ -47,17 +47,13 @@ def check_feature_drift(
             try:
                 cfg = {}
                 if os.path.exists("config/alerts.yaml"):
-                    with open(
-                        "config/alerts.yaml", "r", encoding="utf-8"
-                    ) as fh:
+                    with open("config/alerts.yaml", "r", encoding="utf-8") as fh:
                         cfg = yaml.safe_load(fh) or {}
                 pg = cfg.get("pushgateway", {})
                 url = pg.get("url")
                 job = pg.get("job")
                 if url and job:
-                    pushgateway.push_metrics(
-                        url, job, {f"feature_drift_{f}": 1}
-                    )
+                    pushgateway.push_metrics(url, job, {f"feature_drift_{f}": 1})
             except Exception:
                 pass
     return results

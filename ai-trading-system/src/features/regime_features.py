@@ -8,7 +8,7 @@ def rolling_std(values: List[float], window: int) -> List[float]:
     out = []
     for i in range(len(values)):
         start = max(0, i - window + 1)
-        window_vals = [v for v in values[start:i + 1] if v is not None]
+        window_vals = [v for v in values[start : i + 1] if v is not None]
         if not window_vals:
             out.append(None)
         else:
@@ -26,19 +26,14 @@ def volatility_regime(
     If `threshold` is None, uses median rolling std as threshold.
     """
     closes = [
-        float(r.get("close")) if r.get("close") is not None else None
-        for r in records
+        float(r.get("close")) if r.get("close") is not None else None for r in records
     ]
     stds = rolling_std(closes, window)
     vals = [s for s in stds if s is not None]
     if not vals:
         thr = threshold or 0.0
     else:
-        thr = (
-            threshold
-            if threshold is not None
-            else sorted(vals)[len(vals) // 2]
-        )
+        thr = threshold if threshold is not None else sorted(vals)[len(vals) // 2]
     out = []
     for r, s in zip(records, stds):
         rec = dict(r)

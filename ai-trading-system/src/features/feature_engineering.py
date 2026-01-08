@@ -26,8 +26,7 @@ def build_features(records: List[Dict]) -> List[Dict]:
         # sort by timestamp string (ISO assumed)
         recs = sorted(recs, key=lambda x: x.get("timestamp"))
         closes = [
-            float(r.get("close")) if r.get("close") is not None else None
-            for r in recs
+            float(r.get("close")) if r.get("close") is not None else None for r in recs
         ]
         ma_window = 3
         for i, r in enumerate(recs):
@@ -42,7 +41,7 @@ def build_features(records: List[Dict]) -> List[Dict]:
                     features["return"] = None
             # moving average
             start = max(0, i - ma_window + 1)
-            window = [c for c in closes[start:i + 1] if c is not None]
+            window = [c for c in closes[start : i + 1] if c is not None]
             features["ma_3"] = sum(window) / len(window) if window else None
             out.append(features)
     return out

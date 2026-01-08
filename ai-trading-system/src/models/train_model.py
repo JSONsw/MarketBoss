@@ -18,9 +18,7 @@ def _ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
 
-def train(
-    X: List[List[float]], y: List[float], feature_names: List[str], params=None
-):
+def train(X: List[List[float]], y: List[float], feature_names: List[str], params=None):
     """Train model and compute feature importance when possible.
 
     Returns a stub model object; primary side-effect is writing importances.
@@ -36,9 +34,7 @@ def train(
         with open(out_path, "w", encoding="utf-8") as fh:
             json.dump({"importances": imps}, fh)
         # update dashboard metric timestamp
-        dashboard.set_gauge(
-            "last_feature_importance_run", __import__("time").time()
-        )
+        dashboard.set_gauge("last_feature_importance_run", __import__("time").time())
     except Exception:
         # best-effort: don't fail training if importance computation fails
         pass

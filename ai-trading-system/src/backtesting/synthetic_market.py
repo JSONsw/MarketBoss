@@ -2,6 +2,7 @@
 
 Provides reproducible price and volume series using a given seed.
 """
+
 from __future__ import annotations
 
 from typing import List, Tuple
@@ -70,8 +71,7 @@ def generate_volume_series(
 
 
 def generate_spiky_market(
-    seed: int,
-    length: int = 100
+    seed: int, length: int = 100
 ) -> Tuple[List[float], List[float]]:
     """Return (prices, volumes) with occasional spikes."""
     prices = generate_price_series(
