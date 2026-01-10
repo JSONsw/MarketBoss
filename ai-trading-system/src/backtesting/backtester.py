@@ -82,12 +82,13 @@ def run_backtest_mtm(
     slippage_bp: float = 0.0,
     commission_pct: float = 0.0,
     fixed_fee: float = 0.0,
+    initial_cash: float = 0.0,
 ) -> List[Dict[str, Any]]:
     """Run a basic backtest with position tracking and mark-to-market."""
     logger = get_logger("backtester_mtm")
     results: List[Dict[str, Any]] = []
     position = 0.0
-    cash = 0.0
+    cash = float(initial_cash)
 
     for sig, mkt_price in zip(signals, market_prices):
         price = float(sig["price"])

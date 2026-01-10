@@ -9,3 +9,8 @@ requests
 prometheus-client
 flake8
 tenacity
+pytest-mock
+python-dotenv
+alpaca-trade-api
+streamlit
+yfinance

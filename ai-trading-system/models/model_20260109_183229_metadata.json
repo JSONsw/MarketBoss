@@ -1,0 +1,58 @@
+{
+  "metrics": {
+    "avg_train_mse": 5.582726748200127e-05,
+    "avg_val_mse": 0.0004725736873492973,
+    "std_val_mse": 0.00018878794408732017,
+    "n_folds": 3,
+    "train_scores": [
+      5.39872139726669e-05,
+      3.611068206902066e-05,
+      7.738390640431624e-05
+    ],
+    "val_scores": [
+      0.00046039295327703685,
+      0.0002476877481608033,
+      0.0007096403606100516
+    ]
+  },
+  "feature_importance": [
+    {
+      "feature": "open",
+      "importance": 0.0926404356064171
+    },
+    {
+      "feature": "high",
+      "importance": 0.12673553411882826
+    },
+    {
+      "feature": "low",
+      "importance": 0.1052293135524568
+    },
+    {
+      "feature": "close",
+      "importance": 0.15704264554397063
+    },
+    {
+      "feature": "volume",
+      "importance": 0.13651898179688332
+    },
+    {
+      "feature": "ma_3",
+      "importance": 0.38183308938144384
+    }
+  ],
+  "metadata": {
+    "n_samples": 4679,
+    "n_features": 6,
+    "feature_names": [
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume",
+      "ma_3"
+    ],
+    "timestamp": "2026-01-09T18:32:29.479435",
+    "params": {}
+  }
+}

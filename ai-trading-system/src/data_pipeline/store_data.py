@@ -15,7 +15,10 @@ from datetime import datetime
 from tenacity import retry, stop_after_attempt, wait_exponential
 from src.data_pipeline import data_utils
 from src.monitoring import alerts
+from src.monitoring.structured_logger import get_logger
 import pandas as pd
+
+logger = get_logger()
 
 
 def _ensure_dir(path: str) -> None:
@@ -45,8 +48,8 @@ def _coerce_value(value, pytypes):
                 return True
             if s.lower() in ("false", "0", "no"):
                 return False
-    except Exception:
-        print(f"Failed to coerce value: {value}")
+    except Exception as e:
+        logger.warning("coercion_error", value=value, error=str(e))
         return value
 
     return value
@@ -60,12 +63,12 @@ def fetch_data_from_vendors(vendor_urls: List[str]) -> List[Dict]:
     """
     for url in vendor_urls:
         try:
-            print(f"Trying vendor: {url}")
+            logger.info("fetch_vendor_attempt", url=url)
             response = requests.get(url, timeout=10)
             response.raise_for_status()
             return response.json()
         except Exception as ex:
-            print(f"Vendor {url} failed: {ex}")
+            logger.warning("fetch_vendor_failed", url=url, error=str(ex))
     raise Exception("All data vendors failed! Check network or vendor API health.")
 
 
@@ -95,7 +98,6 @@ def validate_outliers(data: pd.DataFrame, threshold: float = 3.0) -> List[str]:
     Returns a list of column names with outliers detected.
     """
     numeric_data = data.select_dtypes(include=['number'])
-    print(f"Numeric columns for outlier detection: {numeric_data.columns.tolist()}")  # Debug print
 
     outlier_columns = []
     for col in numeric_data.columns:
@@ -117,7 +119,7 @@ def validate_time_series(data: pd.DataFrame, timestamp_col: str = "timestamp") -
     """
     # Ensure timestamps are converted to pandas datetime
     data[timestamp_col] = pd.to_datetime(data[timestamp_col], errors="coerce")
-    print(f"Converted timestamps: {data[timestamp_col].to_list()}")  # Debug timestamps
+    # Timestamp conversion completed
 
     # Check for invalid timestamps
     if data[timestamp_col].isna().any():  # NaT indicates invalid timestamps
@@ -134,7 +136,7 @@ def validate_time_series(data: pd.DataFrame, timestamp_col: str = "timestamp") -
         return True
 
     time_deltas = data[timestamp_col].diff().dropna()
-    print(f"Time deltas: {time_deltas.to_list()}")  # Debug time deltas
+    # Time delta validation completed
 
     # Apply loosened consistency checks for smaller datasets
     if len(time_deltas) == 1:  # Single delta; cannot calculate standard deviation
@@ -179,9 +181,9 @@ def validate_and_store(
     fields_def = schema.get("fields", {})
 
     records_list = list(records)
+    logger.info("validate_and_store_started", record_count=len(records_list))
 
     # ---- COERCION ----
-    print("Initial records:", records_list)
     # Coercion logic for fields
     if fields_def:
         type_map = {}
@@ -221,7 +223,7 @@ def validate_and_store(
             msg = f"Type validation failed for fields: {bad}"
             alerts.send_alert(msg, level="error")
             return False
-        print("After coercion:", records_list)
+        logger.debug("coercion_completed", record_count=len(records_list))
 
     # ---- REQUIRED FIELD CHECK ----
     ok, missing = data_utils.validate_schema(records_list, required)
@@ -229,11 +231,11 @@ def validate_and_store(
         msg = f"Validation failed: missing fields {missing}"
         alerts.send_alert(msg, level="error")
         return False
-    print("All required fields present.")
+    logger.info("required_fields_validated")
 
     # ---- MISSING VALUE DENSITY ----
     mv = data_utils.missing_value_report(records_list)
-    print("Missing value density:", mv)
+    logger.debug("missing_value_check", missing_fields=mv)
 
     problematic = [
         k for k, v in mv.items() if k in required and v >= len(records_list) * 0.5
@@ -242,7 +244,7 @@ def validate_and_store(
         msg = f"Validation failed: too many missing values {problematic}"
         alerts.send_alert(msg, level="error")
         return False
-    print("Passed missing value check.")
+    logger.info("missing_value_check_passed")
 
     # ---- RANGE CHECKS ----
     ranges = {}
@@ -263,21 +265,21 @@ def validate_and_store(
         msg = f"Validation failed: out-of-range values in {out_of_range}"
         alerts.send_alert(msg, level="warning")
         return False
-    print("Passed range checks.")
+    logger.info("range_checks_passed")
 
     # ---- TIME-SERIES AND OUTLIER CHECKS ----
     dataframe = pd.DataFrame(records_list)  # Convert records to DataFrame
     if not validate_time_series(dataframe, "timestamp"):
         alerts.send_alert("Time-series validation failed", level="critical")
         return False
-    print("Passed time-series validation.")
+    logger.info("timeseries_validation_passed")
 
     outliers = validate_outliers(dataframe, threshold=3.0)
-    print("Outliers detected", outliers)
+    logger.info("outliers_detected", columns=outliers)
 
     if outliers:
         alerts.send_alert(f"Outliers detected in columns: {outliers}", level="warning")
-        print("Detected outliers, but allowing operation to continue.")
+        logger.info("outliers_warning_continuing")
 
     # ---- DEDUPLICATION ----
     if unique_key:

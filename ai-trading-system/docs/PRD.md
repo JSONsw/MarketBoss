@@ -101,3 +101,17 @@ Security & Ops
 2. Create issues for remaining high-priority tasks: backtesting
    improvements, risk controls, execution integration.
 3. Schedule demo at end of MVP milestone.
+
+
+## 11. MarketFetcher Integration:
+This module fetches market data, validates it against the schema, and stores valid records to a JSONL file.
+
+## 12. Key Configurations:
+- Schema: Located at `config/data_schema.yaml`.
+- Output Path: JSONL files are written to `data/validated_integration_test.jsonl`.
+
+## 13. Testing:
+- Unit tests: Located in `tests/data_pipeline`.
+- Integration tests: Validate end-to-end processing, including validation and storage logic.
+
+MT109Z4HCWUBAHOU.

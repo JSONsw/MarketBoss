@@ -25,6 +25,21 @@ class StructuredLogger:
         # Emit compact JSON on a single line
         self.logger.info(json.dumps(payload, default=str))
 
+    def debug(self, msg: str, **fields: Any) -> None:
+        payload: Dict[str, Any] = {"message": msg}
+        payload.update(fields)
+        self.logger.debug(json.dumps(payload, default=str))
+
+    def warning(self, msg: str, **fields: Any) -> None:
+        payload: Dict[str, Any] = {"message": msg}
+        payload.update(fields)
+        self.logger.warning(json.dumps(payload, default=str))
+
+    def error(self, msg: str, **fields: Any) -> None:
+        payload: Dict[str, Any] = {"message": msg}
+        payload.update(fields)
+        self.logger.error(json.dumps(payload, default=str))
+
 
 _default_logger = StructuredLogger()
 
