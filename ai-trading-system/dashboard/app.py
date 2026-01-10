@@ -25,6 +25,11 @@ from pathlib import Path
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 
+# Add project root to path for src imports
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 import pandas as pd
 import numpy as np
 import streamlit as st
