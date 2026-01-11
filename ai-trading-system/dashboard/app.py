@@ -125,14 +125,14 @@ def fetch_yahoo_finance_data(symbol: str = "SPY", days: int = 60) -> pd.DataFram
         return pd.DataFrame()
 
 
-def load_market_df(path: Path, use_yahoo: bool = False, symbol: str = "SPY") -> pd.DataFrame:
+def load_market_df(path: Path, use_yahoo: bool = False, symbol: str = "SPY", days: int = 60) -> pd.DataFrame:
     """Load market data from JSONL file or fetch from Yahoo Finance.
     
     If use_yahoo is False and path doesn't exist, automatically fetches from Yahoo Finance
     and caches the data to the path.
     """
     if use_yahoo:
-        return fetch_yahoo_finance_data(symbol)
+        return fetch_yahoo_finance_data(symbol, days=days)
     
     # If JSONL path doesn't exist, auto-fetch from Yahoo Finance
     if not path.exists():
@@ -252,6 +252,7 @@ def run_quick_backtest(signals_df: pd.DataFrame, prices: List[float], initial_ca
 
 # ---------- UI ----------
 st.set_page_config(page_title="MarketBoss Dashboard", layout="wide", initial_sidebar_state="expanded")
+
 st.title("📊 MarketBoss Dashboard")
 
 # Initialize session state for trading controls
@@ -265,6 +266,13 @@ if 'selected_strategy' not in st.session_state:
     st.session_state.selected_strategy = "intraday"
 if 'data_interval' not in st.session_state:
     st.session_state.data_interval = "5m"
+if 'last_refresh' not in st.session_state:
+    st.session_state.last_refresh = time.time()
+
+# Auto-refresh using Streamlit's native rerun (preserves UI state)
+if time.time() - st.session_state.last_refresh > 60:
+    st.session_state.last_refresh = time.time()
+    st.rerun()
 
 with st.sidebar:
     st.header("⚙️ Configuration")
@@ -618,9 +626,9 @@ with st.sidebar:
 # Load data
 if use_yahoo:
     with st.spinner(f"Fetching real-time data from Yahoo Finance for {symbol}..."):
-        market_df = load_market_df(None, use_yahoo=True, symbol=symbol)
+        market_df = load_market_df(None, use_yahoo=True, symbol=symbol, days=days)
         if not market_df.empty:
-            st.sidebar.success(f"✅ Loaded {len(market_df)} bars from Yahoo Finance")
+            st.sidebar.success(f"✅ Loaded {len(market_df)} bars from Yahoo Finance (last {days} days)")
         else:
             st.sidebar.error("❌ Failed to fetch Yahoo Finance data")
 else:
@@ -662,27 +670,64 @@ with tab1:
             latest_timestamp = market_df.index.max()
             st.caption(f"Latest data: {latest_timestamp} | Total bars: {len(market_df):,}")
         
-        # Close price chart
+        # Close price chart with real-time data
         col_title_price, col_help_price = st.columns([0.93, 0.07])
         with col_title_price:
-            st.markdown("**📈 Closing Price Over Time**")
+            st.markdown("**📈 Closing Price Over Time (Real-Time)**")
         with col_help_price:
             with st.popover("ℹ️", use_container_width=True):
-                st.write("Historical closing prices. Use for trend analysis and price movement identification.")
+                st.write("Real-time closing prices from Yahoo Finance. Auto-refreshes every 60 seconds.")
         
-        # Calculate ATL and ATH for closing prices
-        close_min = market_df["close"].min()
-        close_max = market_df["close"].max()
-        close_range = close_max - close_min
-        y_min = close_min - (close_range * 0.02)
-        y_max = close_max + (close_range * 0.02)
+        # Always fetch fresh data for the price chart (last 5 days for detailed view)
+        realtime_price_df = fetch_yahoo_finance_data(symbol=symbol, days=min(5, days))  # Use up to 5 days or user selection
         
-        fig_close = go.Figure()
-        fig_close.add_trace(go.Scatter(x=market_df.index, y=market_df["close"], mode='lines', name='Close Price', line=dict(color='#1f77b4', width=2)))
-        fig_close.update_layout(height=400, yaxis_range=[y_min, y_max], xaxis_title="Time", yaxis_title="Price ($)", showlegend=False, template="plotly_white")
-        st.plotly_chart(fig_close, use_container_width=True)
+        if not realtime_price_df.empty:
+            # Calculate ATL and ATH for closing prices
+            close_min = realtime_price_df["close"].min()
+            close_max = realtime_price_df["close"].max()
+            close_range = close_max - close_min
+            y_min = close_min - (close_range * 0.02)
+            y_max = close_max + (close_range * 0.02)
+            
+            # Get current price and calculate change
+            current_price = realtime_price_df["close"].iloc[-1]
+            prev_price = realtime_price_df["close"].iloc[-2] if len(realtime_price_df) > 1 else current_price
+            price_change = current_price - prev_price
+            price_change_pct = (price_change / prev_price * 100) if prev_price > 0 else 0
+            
+            # Display current price with change
+            col_curr_price, col_change = st.columns(2)
+            with col_curr_price:
+                st.metric("💰 Current Price", f"${current_price:.2f}")
+            with col_change:
+                st.metric("📊 Change", f"${price_change:.2f}", f"{price_change_pct:+.2f}%")
+            
+            fig_close = go.Figure()
+            fig_close.add_trace(go.Scatter(
+                x=realtime_price_df.index, 
+                y=realtime_price_df["close"], 
+                mode='lines', 
+                name='Close Price', 
+                line=dict(color='#1f77b4', width=2)
+            ))
+            fig_close.update_layout(
+                height=400, 
+                yaxis_range=[y_min, y_max], 
+                xaxis_title="Time", 
+                yaxis_title="Price ($)", 
+                showlegend=False, 
+                template="plotly_white",
+                uirevision='price_chart'  # Persist zoom/pan state across refreshes
+            )
+            st.plotly_chart(fig_close, use_container_width=True, key='price_chart')
+            
+            # Show last update time
+            last_update = realtime_price_df.index[-1]
+            st.caption(f"🕐 Last updated: {last_update.strftime('%Y-%m-%d %H:%M:%S')} | Auto-refresh in 60s")
+        else:
+            st.error("Failed to fetch real-time price data")
         
-        # Volume chart
+        # Volume chart - use the same data source (market_df is already loaded with user's days selection)
         col_title_vol, col_help_vol = st.columns([0.93, 0.07])
         with col_title_vol:
             st.markdown("**📊 Trading Volume**")
@@ -690,16 +735,28 @@ with tab1:
             with st.popover("ℹ️", use_container_width=True):
                 st.write("Trading volume indicates liquidity and market interest. Higher volume = stronger moves.")
         
-        volume_data = market_df["volume"].tail(200)
-        vol_max = volume_data.max()
+        # Use all available data from market_df (respects user's days selection)
+        if not market_df.empty and "volume" in market_df.columns:
+            volume_data = market_df["volume"].tail(200)
+            vol_max = volume_data.max()
+            
+            fig_vol = go.Figure()
+            fig_vol.add_trace(go.Bar(x=volume_data.index, y=volume_data, name='Volume', marker_color='#ff7f0e'))
+            fig_vol.update_layout(
+                height=300, 
+                yaxis_range=[0, vol_max * 1.05], 
+                xaxis_title="Time", 
+                yaxis_title="Volume", 
+                showlegend=False, 
+                template="plotly_white",
+                uirevision='volume_chart'  # Persist zoom/pan state across refreshes
+            )
+            st.plotly_chart(fig_vol, use_container_width=True, key='volume_chart')
+        else:
+            st.info("Volume data not available")
         
-        fig_vol = go.Figure()
-        fig_vol.add_trace(go.Bar(x=volume_data.index, y=volume_data, name='Volume', marker_color='#ff7f0e'))
-        fig_vol.update_layout(height=300, yaxis_range=[0, vol_max * 1.05], xaxis_title="Time", yaxis_title="Volume", showlegend=False, template="plotly_white")
-        st.plotly_chart(fig_vol, use_container_width=True)
-        
-        # Returns statistics
-        if "close" in market_df.columns:
+        # Returns statistics - use market_df which respects user's days selection
+        if not market_df.empty and "close" in market_df.columns:
             returns = market_df["close"].pct_change().dropna()
             col_stats1, col_stats2, col_stats3 = st.columns(3)
             with col_stats1:
