@@ -11,9 +11,15 @@ def load_jsonl(path: Path) -> list:
         return []
     records = []
     with open(path) as f:
-        for line in f:
-            if line.strip():
+        for line_num, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
                 records.append(json.loads(line))
+            except json.JSONDecodeError as e:
+                print(f"Warning: Skipping invalid JSON at line {line_num}: {e}")
+                continue
     return records
 
 print("\n" + "="*70)
@@ -29,9 +35,9 @@ equity_records = load_jsonl(equity_path)
 trades_records = load_jsonl(trades_path)
 updates_records = load_jsonl(updates_path)
 
-print(f"✅ Equity Snapshots: {len(equity_records)} records")
-print(f"✅ Executed Trades: {len(trades_records)} records")
-print(f"✅ All Updates: {len(updates_records)} records\n")
+print(f"[OK] Equity Snapshots: {len(equity_records)} records")
+print(f"[OK] Trade Executions: {len(trades_records)} records")
+print(f"[OK] Live Updates: {len(updates_records)} records")
 
 if equity_records:
     df = pd.DataFrame(equity_records)

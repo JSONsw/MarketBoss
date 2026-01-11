@@ -28,7 +28,14 @@ from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass, asdict
 
 from src.execution.mock_alpaca import MockAlpacaClient
+from src.execution.account_persistence import AccountStateManager
 from src.monitoring.structured_logger import get_logger
+
+try:
+    from src.execution.strategy_config import StrategyConfig
+except ImportError:
+    # Strategy config is optional for backward compatibility
+    StrategyConfig = None
 
 logger = get_logger("trading_engine")
 
@@ -69,7 +76,8 @@ class LiveTradingEngine:
         update_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         min_confidence: float = 0.6,
         min_profit_bp: float = 3.0,
-        risk_percent: float = 1.0
+        risk_percent: float = 1.0,
+        strategy: Optional[Any] = None  # StrategyConfig or None (using Any for type compatibility)
     ):
         """Initialize trading engine with profit optimization.
         
@@ -80,19 +88,63 @@ class LiveTradingEngine:
             min_confidence: Minimum signal confidence threshold (0-1). Default 0.6 = 60%
             min_profit_bp: Minimum expected profit in basis points. Default 3bp
             risk_percent: Risk per trade as % of portfolio. Default 1.0%
+            strategy: Optional StrategyConfig object. If provided, overrides individual params.
         """
         self.initial_cash = initial_cash
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.update_callback = update_callback
         
-        # Profit optimization parameters
-        self.min_confidence = min_confidence
-        self.min_profit_bp = min_profit_bp
-        self.risk_percent = risk_percent
+        # Strategy configuration (can override individual parameters)
+        self.strategy = strategy
         
-        # Trading state
-        self.client = MockAlpacaClient(initial_cash=initial_cash, fill_delay_sec=0.1)
+        # Profit optimization parameters (use strategy values if provided, otherwise use args)
+        if strategy:
+            self.min_confidence = getattr(strategy, 'min_confidence', min_confidence)
+            self.min_profit_bp = getattr(strategy, 'min_profit_bp', min_profit_bp)
+            self.risk_percent = getattr(strategy, 'risk_percent', risk_percent)
+            self.min_cooldown_seconds = getattr(strategy, 'min_cooldown_seconds', 300.0)
+        else:
+            self.min_confidence = min_confidence
+            self.min_profit_bp = min_profit_bp
+            self.risk_percent = risk_percent
+            self.min_cooldown_seconds = 300.0  # Default 5 minutes
+        
+        # Profit optimization parameters (use strategy values if provided, otherwise use args)
+        if strategy:
+            self.min_confidence = strategy.min_confidence
+            self.min_profit_bp = strategy.min_profit_bp
+            self.risk_percent = strategy.risk_percent
+            self.min_cooldown_seconds = strategy.min_cooldown_seconds
+        else:
+            self.min_confidence = min_confidence
+            self.min_profit_bp = min_profit_bp
+            self.risk_percent = risk_percent
+            self.min_cooldown_seconds = 300.0  # Default 5 minutes
+        
+        # Account persistence - load saved state first
+        self.account_state_manager = AccountStateManager(output_dir / "account_state.json")
+        saved_state = self.account_state_manager.load_state()
+        
+        # Use saved state if available, otherwise use initial_cash
+        if saved_state:
+            actual_cash = saved_state.get('portfolio_value', initial_cash)
+            logger.info(
+                "Loaded persisted account state",
+                extra={
+                    "cash": actual_cash,
+                    "session_count": saved_state.get('session_count', 0),
+                    "lifetime_trades": saved_state.get('trades_count', 0)
+                }
+            )
+        else:
+            actual_cash = initial_cash
+            logger.info("No saved state found - starting fresh", extra={"initial_cash": initial_cash})
+        
+        self.session_start_trades = self.account_state_manager.get_lifetime_trades()
+        
+        # Trading state - use persisted cash
+        self.client = MockAlpacaClient(initial_cash=actual_cash, fill_delay_sec=0.1)
         self.account = self.client.get_account()
         
         # Output files
@@ -106,6 +158,7 @@ class LiveTradingEngine:
         self.update_count = 0
         self.trades_count = 0
         self.last_trade_time = {}  # Track last trade time per symbol
+        self.position_state: Dict[str, str] = {}  # Track position state per symbol: "FLAT", "LONG", "SHORT"
         
         # Record initial state
         self._record_equity_update("INIT")
@@ -140,6 +193,43 @@ class LiveTradingEngine:
             if base_qty <= 0 or action not in ["BUY", "SELL"]:
                 return False
             
+            # CRITICAL: Position-aware filtering - prevent churning
+            # Get current position state from broker
+            positions = self.client.get_positions()
+            current_position = next((p for p in positions if p.symbol == symbol), None)
+            
+            # Determine current state: FLAT, LONG, or SHORT
+            if current_position and current_position.qty > 0:
+                current_state = "LONG"
+            elif current_position and current_position.qty < 0:
+                current_state = "SHORT"
+            else:
+                current_state = "FLAT"
+            
+            # Cache the state
+            self.position_state[symbol] = current_state
+            
+            # FILTER 0: Position State Machine - only trade on position transitions
+            # LONG state: ignore BUY signals (already long), only accept SELL to exit
+            # SHORT state: ignore SELL signals (already short), only accept BUY to exit
+            # FLAT state: accept both BUY (enter long) and SELL (enter short)
+            
+            if current_state == "LONG" and action == "BUY":
+                logger.debug("Signal filtered - already LONG, ignoring BUY signal", extra={
+                    "symbol": symbol,
+                    "current_state": current_state,
+                    "signal_action": action
+                })
+                return False
+            
+            if current_state == "SHORT" and action == "SELL":
+                logger.debug("Signal filtered - already SHORT, ignoring SELL signal", extra={
+                    "symbol": symbol,
+                    "current_state": current_state,
+                    "signal_action": action
+                })
+                return False
+            
             # FILTER 1: Signal Confidence Check (optional field, defaults to 0.5)
             confidence = signal.get("confidence", 0.50)
             # Only skip if confidence is explicitly provided AND below threshold
@@ -165,14 +255,14 @@ class LiveTradingEngine:
             
             # FILTER 3: Trade Frequency Limit (prevent over-trading same symbol)
             current_time = time.time()
-            min_time_between_trades = 0.1  # Minimum 100ms between trades on same symbol
+            min_time_between_trades = self.min_cooldown_seconds  # Use strategy cooldown or default
             if symbol in self.last_trade_time:
                 time_since_last = current_time - self.last_trade_time[symbol]
                 if time_since_last < min_time_between_trades:
                     logger.debug("Signal filtered - too frequent", extra={
                         "symbol": symbol,
-                        "time_since_last": time_since_last,
-                        "min_required": min_time_between_trades
+                        "time_since_last_minutes": time_since_last / 60.0,
+                        "min_required_minutes": min_time_between_trades / 60.0
                     })
                     return False
             
@@ -248,13 +338,24 @@ class LiveTradingEngine:
                     self._record_trade(filled_order, signal)
                     self._record_equity_update("TRADE")
                     
+                    # Update position state after trade
+                    if action == "BUY":
+                        # BUY from FLAT = LONG, BUY from SHORT = FLAT (cover)
+                        new_state = "LONG" if current_state in ["FLAT", "SHORT"] else "LONG"
+                    else:  # SELL
+                        # SELL from FLAT = SHORT, SELL from LONG = FLAT (exit)
+                        new_state = "SHORT" if current_state == "FLAT" else "FLAT"
+                    
+                    self.position_state[symbol] = new_state
+                    
                     logger.info("Trade executed", extra={
                         "symbol": symbol,
                         "action": action,
                         "qty": filled_order.filled_qty,
                         "price": filled_order.filled_avg_price,
                         "confidence": confidence,
-                        "expected_profit_bp": expected_profit_bp
+                        "expected_profit_bp": expected_profit_bp,
+                        "position_transition": f"{current_state} -> {new_state}"
                     })
                     
                     return True
@@ -369,6 +470,31 @@ class LiveTradingEngine:
     def get_positions(self):
         """Get current open positions."""
         return self.client.get_positions()
+    
+    def save_account_state(self) -> None:
+        """Save current account state for persistence across sessions."""
+        positions = self.client.get_positions()
+        positions_dict = {
+            p.symbol: {"qty": p.qty, "avg_price": p.avg_fill_price}
+            for p in positions
+        }
+        
+        session_count = self.account_state_manager.get_session_count() + 1
+        lifetime_trades = self.session_start_trades + self.trades_count
+        
+        self.account_state_manager.save_state(
+            cash=self.account.cash,
+            portfolio_value=self.account.portfolio_value,
+            positions=positions_dict,
+            trades_count=lifetime_trades,
+            session_count=session_count
+        )
+        
+        logger.info("Account state saved", extra={
+            "portfolio_value": self.account.portfolio_value,
+            "session": session_count,
+            "lifetime_trades": lifetime_trades
+        })
 
 
 def load_market_data(path: Path) -> List[Dict[str, Any]]:
@@ -412,18 +538,20 @@ def run_live_trading(
     min_profit_bp: float = 3.0,
     risk_percent: float = 1.0,
     current_price: Optional[float] = None,
+    use_persistence: bool = True,
 ) -> LiveTradingEngine:
-    """Run live trading simulation with profit optimization.
+    """Run live trading simulation with profit optimization and account persistence.
     
     Args:
         market_data_path: Path to market OHLCV data
         signals_path: Path to trade signals
-        initial_cash: Starting capital
+        initial_cash: Starting capital (only used if no saved state exists)
         output_dir: Output directory for logs
         min_confidence: Minimum signal confidence threshold (0-1)
         min_profit_bp: Minimum expected profit in basis points
         risk_percent: Risk per trade as % of portfolio
         current_price: Current market price to use (overrides historical data)
+        use_persistence: If True, load/save account state between sessions
     
     Returns:
         Completed trading engine with results
@@ -431,6 +559,14 @@ def run_live_trading(
     print(f"\n{'='*70}")
     print("Live Trading Engine - Real-time Simulation with Profit Optimization")
     print(f"{'='*70}\n")
+    
+    # Load or initialize account state
+    if use_persistence:
+        account_mgr = AccountStateManager(output_dir / "account_state.json")
+        starting_capital = account_mgr.get_initial_cash(default=initial_cash)
+    else:
+        starting_capital = initial_cash
+        print(f"📊 Starting new account - Initial capital: ${initial_cash:,.2f}")
     
     # Load data
     market_data = load_market_data(market_data_path)
@@ -445,7 +581,7 @@ def run_live_trading(
     
     print(f"Market data points: {len(market_data)}")
     print(f"Signals: {len(signals)}")
-    print(f"Initial cash: ${initial_cash:,.2f}\n")
+    print(f"Starting capital: ${starting_capital:,.2f}\n")
     print("Profit Optimization Settings:")
     print(f"  Min Confidence: {min_confidence*100:.1f}%")
     print(f"  Min Profit Edge: {min_profit_bp:.1f}bp")
@@ -453,7 +589,7 @@ def run_live_trading(
     
     # Create engine with optimization parameters
     engine = LiveTradingEngine(
-        initial_cash=initial_cash,
+        initial_cash=starting_capital,
         output_dir=output_dir,
         min_confidence=min_confidence,
         min_profit_bp=min_profit_bp,
@@ -523,13 +659,19 @@ def run_live_trading(
     print(f"  Buying Power:   ${status['buying_power']:,.2f}")
     print(f"  Open Positions: {status['positions_count']}")
     
-    initial_pv = initial_cash
+    initial_pv = starting_capital
     final_pv = status['portfolio_value']
     pnl = final_pv - initial_pv
     return_pct = (pnl / initial_pv) * 100
-    print(f"\nPerformance:")
+    print(f"\nSession Performance:")
     print(f"  P&L:    ${pnl:,.2f}")
     print(f"  Return: {return_pct:+.2f}%")
+    
+    # Save account state for next session
+    if use_persistence:
+        engine.save_account_state()
+        print(f"\n✅ Account state saved for next session")
+    
     print(f"{'='*70}\n")
     
     return engine

@@ -38,6 +38,12 @@ sys.path.append(str(ROOT))
 from src.monitoring.structured_logger import get_logger
 from src.execution.trading_engine import run_live_trading
 
+try:
+    from src.execution.strategy_config import StrategyManager
+    STRATEGY_SUPPORT = True
+except ImportError:
+    STRATEGY_SUPPORT = False
+
 logger = get_logger("continuous_trading")
 
 # Global flag for graceful shutdown
@@ -85,14 +91,48 @@ class ContinuousTrader:
         risk_percent: float = 1.0,
         aggressive: bool = False,
         test_mode: bool = False,
+        strategy: Optional[str] = None,
     ):
         self.symbol = symbol
         self.interval = interval_seconds
         self.market_data_path = market_data_path
         self.signals_path = signals_path
-        self.min_confidence = min_confidence
-        self.min_profit_bp = min_profit_bp
-        self.risk_percent = risk_percent
+        self.strategy_name = strategy
+        
+        # Load strategy config if provided and available
+        if strategy and STRATEGY_SUPPORT:
+            try:
+                strategy_mgr = StrategyManager()
+                strategy_config = strategy_mgr.get_strategy(strategy)
+                
+                # Override parameters with strategy config
+                self.min_confidence = strategy_config.min_confidence
+                self.min_profit_bp = strategy_config.min_profit_bp
+                self.risk_percent = strategy_config.risk_percent
+                
+                logger.info(
+                    f"Loaded strategy: {strategy}",
+                    extra={
+                        "strategy": strategy,
+                        "timeframe": strategy_config.timeframe,
+                        "data_interval": strategy_config.data_interval,
+                        "min_confidence": strategy_config.min_confidence,
+                        "min_profit_bp": strategy_config.min_profit_bp,
+                        "risk_percent": strategy_config.risk_percent,
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to load strategy '{strategy}': {e}. Using manual parameters.")
+                # Fall back to manual parameters
+                self.min_confidence = min_confidence
+                self.min_profit_bp = min_profit_bp
+                self.risk_percent = risk_percent
+        else:
+            # Use manual parameters
+            self.min_confidence = min_confidence
+            self.min_profit_bp = min_profit_bp
+            self.risk_percent = risk_percent
+        
         self.aggressive = aggressive
         self.test_mode = test_mode
         self.run_count = 0
@@ -112,6 +152,7 @@ class ContinuousTrader:
             "Continuous Trading initialized",
             extra={
                 "symbol": self.symbol,
+                "strategy": self.strategy_name,
                 "interval_seconds": interval_seconds,
                 "min_confidence": self.min_confidence,
                 "min_profit_bp": self.min_profit_bp,
@@ -167,8 +208,15 @@ class ContinuousTrader:
         Fetches 5-minute intraday data for the selected symbol with proper timezone handling.
         Filters to regular market hours (9:30 AM - 4:00 PM EST).
         Uses accurate real-time data from Yahoo Finance.
+        
+        Returns False if market is closed to prevent trading on stale data.
         """
         try:
+            # Check if market is open BEFORE fetching data to avoid stale data
+            if not self.test_mode and not is_market_open():
+                logger.warning("Market is closed - skipping data refresh to avoid stale data")
+                return False
+            
             logger.info("Fetching fresh market data from Yahoo Finance")
             
             # Timezone handling
@@ -214,6 +262,28 @@ class ContinuousTrader:
                 return False
             
             logger.info(f"Filtered to {len(df)} bars in regular market hours (9:30 AM - 4:00 PM EST)")
+            
+            # Validate data freshness - most recent bar should be within last 15 minutes
+            if not self.test_mode:
+                latest_timestamp = df.index[-1]
+                now_est = datetime.now(pytz.timezone('US/Eastern'))
+                
+                # Ensure latest_timestamp has timezone
+                if latest_timestamp.tzinfo is None:
+                    latest_timestamp = est.localize(latest_timestamp)
+                else:
+                    latest_timestamp = latest_timestamp.tz_convert(est)
+                
+                data_age_minutes = (now_est - latest_timestamp).total_seconds() / 60
+                
+                if data_age_minutes > 15:
+                    logger.error(
+                        f"Market data is stale (age: {data_age_minutes:.1f} minutes) - aborting refresh",
+                        extra={"latest_timestamp": str(latest_timestamp), "current_time": str(now_est)}
+                    )
+                    return False
+                
+                logger.info(f"Data freshness validated: {data_age_minutes:.1f} minutes old")
             
             # Convert to JSONL format with accurate timestamps
             records = []
@@ -263,11 +333,7 @@ class ContinuousTrader:
     def run_trading_session(self) -> Dict[str, Any]:
         """Execute one live trading session with current market price."""
         try:
-            # Check if market is open (skip check in test mode)
-            if not self.test_mode and not is_market_open():
-                logger.info("Market is closed, skipping trading session")
-                return {"success": False, "reason": "market_closed"}
-            
+            # Market hours check already done in refresh_data() to prevent stale data
             if self.test_mode:
                 logger.info("TEST MODE: Trading outside market hours for testing")
             
@@ -338,9 +404,12 @@ class ContinuousTrader:
                 # This ensures trades execute at current market prices, not stale cached data
                 logger.info("Refreshing market data for real-time accuracy")
                 if not self.refresh_data():
-                    logger.warning("Data refresh failed, using existing data")
+                    logger.warning("Data refresh failed (market closed or stale data) - skipping trading session")
+                    # Wait and retry in next iteration
+                    time.sleep(min(self.interval, 300))  # Wait up to 5 minutes
+                    continue
                 
-                # Run trading session
+                # Run trading session (only if data is fresh)
                 self.run_trading_session()
                 
                 # Wait for next interval (check shutdown flag every second)
@@ -381,6 +450,12 @@ def main():
         type=str,
         default="SPY",
         help="Stock ticker symbol to trade (default: SPY)",
+    )
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        default=None,
+        help="Trading strategy to use (intraday, swing, weekly, monthly). Overrides manual parameters.",
     )
     parser.add_argument(
         "--interval",
@@ -447,6 +522,7 @@ def main():
         risk_percent=args.risk_percent,
         aggressive=args.aggressive,
         test_mode=args.test_mode,
+        strategy=args.strategy,
     )
     
     trader.run(max_iterations=args.max_iterations)

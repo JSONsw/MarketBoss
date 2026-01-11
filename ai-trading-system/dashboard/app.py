@@ -40,6 +40,15 @@ import pytz
 
 from src.backtesting.backtester import run_backtest_mtm
 from src.monitoring.structured_logger import get_logger
+from dashboard.trade_feed import TradeFeedViewer, render_trade_feed_sidebar
+
+# Try to import strategy configuration
+try:
+    from src.execution.strategy_config import StrategyManager
+    STRATEGY_SUPPORT = True
+except ImportError:
+    STRATEGY_SUPPORT = False
+    logger.warning("Strategy configuration not available")
 
 logger = get_logger("dashboard")
 # Project root (repo root two levels up from this file)
@@ -54,14 +63,14 @@ def load_jsonl(path: Path) -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
     try:
         with path.open("r", encoding="utf-8") as f:
-            for line in f:
+            for line_num, line in enumerate(f, 1):
                 line = line.strip()
                 if not line:
                     continue
                 try:
                     records.append(json.loads(line))
                 except json.JSONDecodeError:
-                    logger.warning(f"Skipping invalid JSON line in {path}")
+                    logger.warning(f"Skipping invalid JSON at line {line_num} in {path}")
     except FileNotFoundError:
         logger.warning(f"File not found: {path}")
     except Exception as e:
@@ -242,8 +251,8 @@ def run_quick_backtest(signals_df: pd.DataFrame, prices: List[float], initial_ca
 
 
 # ---------- UI ----------
-st.set_page_config(page_title="MarketBoss Dashboard", layout="wide")
-st.title("MarketBoss Dashboard")
+st.set_page_config(page_title="MarketBoss Dashboard", layout="wide", initial_sidebar_state="expanded")
+st.title("📊 MarketBoss Dashboard")
 
 # Initialize session state for trading controls
 if 'trading_symbol' not in st.session_state:
@@ -252,25 +261,80 @@ if 'is_trading' not in st.session_state:
     st.session_state.is_trading = False
 if 'trading_process' not in st.session_state:
     st.session_state.trading_process = None
+if 'selected_strategy' not in st.session_state:
+    st.session_state.selected_strategy = "intraday"
+if 'data_interval' not in st.session_state:
+    st.session_state.data_interval = "5m"
 
 with st.sidebar:
-    st.header("Data Sources & Trading")
+    st.header("⚙️ Configuration")
+    
+    # Strategy Selection
+    if STRATEGY_SUPPORT:
+        st.subheader("📈 Trading Strategy")
+        try:
+            strategy_mgr = StrategyManager()
+            available_strategies = list(strategy_mgr.list_strategies().keys())
+            
+            # Initialize selected_strategy in session state if needed
+            if 'selected_strategy' not in st.session_state or st.session_state.selected_strategy not in available_strategies:
+                st.session_state.selected_strategy = available_strategies[0]
+            
+            # Callback function to update data interval when strategy changes
+            def on_strategy_change():
+                strategy = strategy_mgr.get_strategy(st.session_state.selected_strategy)
+                st.session_state.data_interval = strategy.data_interval
+            
+            # Use selectbox with key parameter to bind directly to session state
+            st.selectbox(
+                "Select Strategy",
+                options=available_strategies,
+                key='selected_strategy',  # Binds directly to st.session_state.selected_strategy
+                on_change=on_strategy_change,
+                help="Choose trading timeframe: intraday (5m), swing (1h), weekly (1d), monthly (1d)"
+            )
+            
+            # Display strategy info (always load current strategy from session state)
+            strategy = strategy_mgr.get_strategy(st.session_state.selected_strategy)
+            with st.expander("ℹ️ Strategy Details", expanded=False):
+                st.write(f"**{strategy.name}**")
+                st.write(f"📊 Interval: {strategy.data_interval}")
+                st.write(f"📉 MA Periods: {strategy.ma_fast_period}/{strategy.ma_slow_period}")
+                st.write(f"⏱️ Cooldown: {strategy.min_cooldown_minutes}min")
+                st.write(f"🎯 Min Confidence: {strategy.min_confidence}%")
+                st.write(f"💰 Risk per Trade: {strategy.risk_percent}%")
+        except Exception as e:
+            st.error(f"Strategy loading error: {e}")
+            st.session_state.selected_strategy = "intraday"
+    else:
+        st.warning("Strategy config not available")
+        st.session_state.selected_strategy = "intraday"
+    
+    st.divider()
     
     # Market Data Source Selection
-    st.subheader("Market Data")
+    st.subheader("📊 Market Data")
     data_source = st.radio(
         "Data Source",
         ["Yahoo Finance (Real-time)", "JSONL File (Historical)"],
-        index=0
+        index=0,
+        help="Real-time fetches live data, JSONL uses cached historical data"
     )
     
     if data_source == "Yahoo Finance (Real-time)":
         use_yahoo = True
         symbol = st.text_input("Symbol", st.session_state.trading_symbol, key="symbol_input")
-        # Update session state when symbol changes
         if symbol != st.session_state.trading_symbol:
             st.session_state.trading_symbol = symbol
-        days = st.number_input("Days of history", min_value=1, max_value=365, value=60)
+        
+        # Strategy-aware lookback period
+        if STRATEGY_SUPPORT and 'strategy' in locals():
+            default_days = strategy.lookback_days
+            st.caption(f"Strategy default: {default_days} days")
+        else:
+            default_days = 60
+        
+        days = st.number_input("Days of history", min_value=1, max_value=730, value=default_days)
         market_path = None
     else:
         use_yahoo = False
@@ -280,8 +344,10 @@ with st.sidebar:
     st.divider()
     
     # Trading Control Section
-    st.subheader("📈 Trading Controls")
-    st.write(f"**Currently selected:** {st.session_state.trading_symbol}")
+    st.subheader("🎮 Trading Controls")
+    st.write(f"**Symbol:** {st.session_state.trading_symbol}")
+    if STRATEGY_SUPPORT:
+        st.write(f"**Strategy:** {st.session_state.selected_strategy.title()}")
     
     col_trader1, col_trader2 = st.columns(2)
     
@@ -290,6 +356,84 @@ with st.sidebar:
             import subprocess
             import os
             import sys
+            import json
+            from datetime import datetime, timezone, timedelta
+            
+            # Always do fresh check for running processes (don't trust session state)
+            running_processes = []
+            try:
+                result = subprocess.run(
+                    ['powershell', '-Command', 
+                     'Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -like "*run_continuous_trading.py*"} | Select-Object ProcessId,CommandLine | ConvertTo-Json'],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                
+                if result.returncode == 0 and result.stdout.strip() and result.stdout.strip() != '[]':
+                    try:
+                        processes = json.loads(result.stdout)
+                        if isinstance(processes, dict):
+                            running_processes = [processes]
+                        elif isinstance(processes, list):
+                            running_processes = processes
+                    except json.JSONDecodeError:
+                        pass
+            except Exception as e:
+                logger.warning(f"Could not check for existing processes: {e}")
+            
+            # If processes found, check if they're actually active by checking file timestamp
+            if running_processes:
+                # Check if live_trading_updates.jsonl has recent updates (within last 5 minutes)
+                updates_file = ROOT / "data" / "live_trading_updates.jsonl"
+                is_actively_trading = False
+                
+                if updates_file.exists():
+                    try:
+                        # Get last line of file
+                        with open(updates_file, 'r') as f:
+                            lines = f.readlines()
+                            if lines:
+                                last_line = json.loads(lines[-1])
+                                last_timestamp = datetime.fromisoformat(last_line['timestamp'].replace('Z', '+00:00'))
+                                time_since_update = datetime.now(timezone.utc) - last_timestamp
+                                
+                                # If updates within last 5 minutes, consider it active
+                                if time_since_update < timedelta(minutes=5):
+                                    is_actively_trading = True
+                    except Exception as e:
+                        logger.warning(f"Could not check trading activity: {e}")
+                        # If we can't check, assume process is active to be safe
+                        is_actively_trading = True
+                
+                if is_actively_trading:
+                    st.sidebar.warning(f"⚠️ Trading already running! Found {len(running_processes)} active process(es).")
+                    st.sidebar.info("Click 'Stop Trading' first, then wait 2 seconds before starting again.")
+                    for proc in running_processes[:3]:  # Show first 3
+                        st.sidebar.text(f"PID: {proc.get('ProcessId')}")
+                    # Update session state to match reality
+                    st.session_state.is_trading = True
+                    st.stop()
+                else:
+                    # Process exists but no recent updates - likely zombie/stale process
+                    st.sidebar.warning(f"⚠️ Found stale trading process (no updates in 5+ minutes)")
+                    st.sidebar.info("Killing stale process...")
+                    for proc in running_processes:
+                        pid = proc.get('ProcessId')
+                        try:
+                            subprocess.run(['taskkill', '/F', '/T', '/PID', str(pid)], 
+                                         capture_output=True, timeout=5)
+                            st.sidebar.success(f"Killed stale process {pid}")
+                        except Exception as e:
+                            logger.warning(f"Could not kill process {pid}: {e}")
+                    # Wait a moment then allow start
+                    import time
+                    time.sleep(1)
+            
+            # No processes running - safe to start
+            # Clear any stale session state
+            st.session_state.is_trading = False
+            st.session_state.trading_process = None
             
             # Normalize and store the current symbol from input (default SPY)
             current_symbol = (st.session_state.get("symbol_input", st.session_state.trading_symbol) or "SPY").upper()
@@ -312,6 +456,9 @@ with st.sidebar:
                         "--aggressive",
                         "--test-mode"
                     ]
+                    # Add strategy if available
+                    if STRATEGY_SUPPORT and st.session_state.selected_strategy:
+                        cmd.extend(["--strategy", st.session_state.selected_strategy])
                     process = subprocess.Popen(
                         cmd,
                         cwd=str(ROOT),
@@ -326,9 +473,19 @@ with st.sidebar:
                         "--aggressive",
                         "--test-mode"
                     ]
+                    # Add strategy if available
+                    if STRATEGY_SUPPORT and st.session_state.selected_strategy:
+                        cmd.extend(["--strategy", st.session_state.selected_strategy])
                     process = subprocess.Popen(cmd, cwd=str(ROOT))
                 
                 st.session_state.trading_process = process.pid
+                
+                # Save PID to file for persistence across dashboard restarts
+                pid_file = ROOT / "data" / ".trading_process.pid"
+                pid_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(pid_file, 'w') as f:
+                    f.write(str(process.pid))
+                
                 st.sidebar.success(f"✅ Started trading {current_symbol}")
                 st.sidebar.info(f"Process ID: {process.pid}")
                 st.sidebar.info(f"Console window opened - check for trading output")
@@ -341,24 +498,105 @@ with st.sidebar:
     
     with col_trader2:
         if st.button("⏹️ Stop Trading", key="stop_trading", use_container_width=True):
+            import subprocess
+            import os
+            
             try:
-                import subprocess
-                # Kill only the specific trading process, not all Python processes
-                if st.session_state.trading_process:
-                    subprocess.run(
-                        ["taskkill", "/F", "/PID", str(st.session_state.trading_process)],
-                        capture_output=True,
-                        shell=True
-                    )
-                    st.sidebar.success(f"✅ Stopped trading process {st.session_state.trading_process}")
-                else:
-                    st.sidebar.warning("No active trading process to stop")
+                killed_count = 0
                 
+                # Method 1: Try to kill process from PID file
+                pid_file = ROOT / "data" / ".trading_process.pid"
+                if pid_file.exists():
+                    try:
+                        with open(pid_file, 'r') as f:
+                            saved_pid = int(f.read().strip())
+                        
+                        # Use /T to kill entire process tree (including children)
+                        result = subprocess.run(
+                            ["taskkill", "/F", "/T", "/PID", str(saved_pid)],
+                            capture_output=True,
+                            text=True
+                        )
+                        
+                        if result.returncode == 0 or "SUCCESS" in result.stdout:
+                            st.sidebar.success(f"✅ Stopped trading process tree {saved_pid}")
+                            killed_count += 1
+                        elif "not found" not in result.stderr.lower():
+                            st.sidebar.warning(f"Process {saved_pid} may already be stopped")
+                        
+                        # Clean up PID file
+                        pid_file.unlink()
+                    except Exception as e:
+                        logger.warning(f"Could not kill process from PID file: {e}")
+                
+                # Method 2: Try to kill process from session state
+                if st.session_state.trading_process:
+                    try:
+                        # Use /T to kill entire process tree
+                        result = subprocess.run(
+                            ["taskkill", "/F", "/T", "/PID", str(st.session_state.trading_process)],
+                            capture_output=True,
+                            text=True
+                        )
+                        
+                        if result.returncode == 0 or "SUCCESS" in result.stdout:
+                            st.sidebar.success(f"✅ Stopped trading process tree {st.session_state.trading_process}")
+                            killed_count += 1
+                        elif "not found" not in result.stderr.lower():
+                            st.sidebar.warning(f"Process {st.session_state.trading_process} may already be stopped")
+                    except Exception as e:
+                        logger.warning(f"Could not kill process from session: {e}")
+                
+                # Method 3: Find and kill all run_continuous_trading.py processes
+                try:
+                    # Use tasklist to find processes running our script
+                    result = subprocess.run(
+                        ['powershell', '-Command', 
+                         'Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -like "*run_continuous_trading.py*"} | Select-Object ProcessId,CommandLine | ConvertTo-Json'],
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+                    
+                    if result.returncode == 0 and result.stdout.strip() and result.stdout.strip() != '[]':
+                        import json
+                        processes = json.loads(result.stdout)
+                        
+                        # Handle single process (not in array)
+                        if isinstance(processes, dict):
+                            processes = [processes]
+                        
+                        for proc in processes:
+                            pid = proc['ProcessId']
+                            # Use /T to kill entire process tree
+                            kill_result = subprocess.run(
+                                ["taskkill", "/F", "/T", "/PID", str(pid)], 
+                                capture_output=True,
+                                text=True
+                            )
+                            if kill_result.returncode == 0 or "SUCCESS" in kill_result.stdout:
+                                st.sidebar.success(f"✅ Killed trading process tree {pid}")
+                                killed_count += 1
+                except Exception as e:
+                    logger.warning(f"Could not search for trading processes: {e}")
+                
+                # Update state
                 st.session_state.is_trading = False
                 st.session_state.trading_process = None
+                
+                if killed_count == 0:
+                    st.sidebar.warning("⚠️ No active trading processes found")
+                else:
+                    st.sidebar.success(f"✅ Stopped {killed_count} trading process(es)")
+                    # Give processes time to fully terminate
+                    import time
+                    time.sleep(1.5)
+                
                 st.rerun()
+                
             except Exception as e:
-                st.sidebar.warning(f"Could not stop trading: {str(e)}")
+                st.sidebar.error(f"❌ Error stopping trading: {str(e)}")
+                logger.error(f"Error stopping trading: {str(e)}", exc_info=True)
                 st.session_state.is_trading = False
                 st.session_state.trading_process = None
     
@@ -367,6 +605,9 @@ with st.sidebar:
         st.sidebar.success(f"🟢 Trading active for {st.session_state.trading_symbol}")
     else:
         st.sidebar.info("⚫ Trading not active")
+    
+    # Add live trade feed to sidebar
+    render_trade_feed_sidebar()
     
     st.divider()
     signals_path = Path(st.text_input("Signals JSONL", "data/signals.jsonl"))
@@ -387,363 +628,508 @@ else:
 signals_df = load_signals_df(signals_path)
 model_meta = load_latest_model_metadata(models_dir)
 
-# Overview
-col1, col2, col3 = st.columns(3)
-col1.metric("Market bars", f"{len(market_df):,}")
-col2.metric("Signals", f"{len(signals_df):,}")
-if model_meta:
-    metrics = model_meta.get("metrics", {})
-    col3.metric("Avg Val MSE", f"{metrics.get('avg_val_mse', 0):.6f}")
-else:
-    col3.metric("Avg Val MSE", "-")
+# Overview Metrics
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.metric("📊 Market Bars", f"{len(market_df):,}")
+with col2:
+    st.metric("🎯 Signals", f"{len(signals_df):,}")
+with col3:
+    if STRATEGY_SUPPORT:
+        st.metric("⚡ Strategy", st.session_state.selected_strategy.title())
+    else:
+        st.metric("⚡ Interval", st.session_state.data_interval)
+with col4:
+    if model_meta:
+        metrics = model_meta.get("metrics", {})
+        st.metric("🎓 Model MSE", f"{metrics.get('avg_val_mse', 0):.6f}")
+    else:
+        st.metric("🎓 Model MSE", "-")
 
-# Price and volume
-data_source_label = f"Yahoo Finance ({symbol}) - Real-time" if use_yahoo else "Historical JSONL"
-st.subheader(f"Market Data - {data_source_label}")
-if market_df.empty:
-    st.info("No market data found at the provided path.")
-else:
-    # Show data freshness
-    if not market_df.empty and hasattr(market_df.index, 'max'):
-        latest_timestamp = market_df.index.max()
-        st.caption(f"Latest data: {latest_timestamp} | Total bars: {len(market_df):,}")
-    
-    # Close price chart
-    col_title_price, col_help_price = st.columns([0.93, 0.07])
-    with col_title_price:
-        st.markdown("**📈 Closing Price Over Time**")
-    with col_help_price:
-        with st.popover("ℹ️", use_container_width=True):
-            st.write("Historical daily closing prices. Use for trend analysis and price movement identification.")
-    
-    # Calculate ATL and ATH for closing prices
-    close_min = market_df["close"].min()
-    close_max = market_df["close"].max()
-    close_range = close_max - close_min
-    # Add 2% padding for better visualization
-    y_min = close_min - (close_range * 0.02)
-    y_max = close_max + (close_range * 0.02)
-    
-    fig_close = go.Figure()
-    fig_close.add_trace(go.Scatter(x=market_df.index, y=market_df["close"], mode='lines', name='Close Price'))
-    fig_close.update_layout(height=500, yaxis_range=[y_min, y_max], xaxis_title="Time", yaxis_title="Price ($)", showlegend=False)
-    st.plotly_chart(fig_close, use_container_width=True)
-    
-    # Volume chart
-    col_title_vol, col_help_vol = st.columns([0.93, 0.07])
-    with col_title_vol:
-        st.markdown("**📊 Trading Volume (Last 200 Bars)**")
-    with col_help_vol:
-        with st.popover("ℹ️", use_container_width=True):
-            st.write("Daily trading volume indicates liquidity and market interest. Higher volume = stronger moves.")
-    
-    # Volume chart should start at 0 and go to max
-    volume_data = market_df["volume"].tail(200)
-    vol_max = volume_data.max()
-    
-    fig_vol = go.Figure()
-    fig_vol.add_trace(go.Bar(x=volume_data.index, y=volume_data, name='Volume'))
-    fig_vol.update_layout(height=500, yaxis_range=[0, vol_max * 1.05], xaxis_title="Time", yaxis_title="Volume", showlegend=False)
-    st.plotly_chart(fig_vol, use_container_width=True)
-    
-    # Returns statistics
-    if "close" in market_df.columns:
-        returns = market_df["close"].pct_change().dropna()
-        col_stats1, col_stats2 = st.columns(2)
-        with col_stats1:
-            st.metric("Mean Daily Return", f"{returns.mean():.6f}")
-        with col_stats2:
-            st.metric("Daily Volatility", f"{returns.std():.6f}")
+# Create tabbed interface for better organization
+tab1, tab2, tab3, tab4 = st.tabs(["📈 Market Analysis", "🎯 Signals & Model", "💹 Live Trading", "📊 Performance"])
 
-# Signals
-st.subheader("Signals")
-if signals_df.empty:
-    st.info("No signals loaded. Use the generator or provide a signals JSONL.")
-else:
-    col_sig_title, col_sig_help = st.columns([0.93, 0.07])
-    with col_sig_title:
-        st.markdown(f"**🎯 Trade Signals (Last 50 of {len(signals_df)})**")
-    with col_sig_help:
-        with st.popover("ℹ️", use_container_width=True):
-            st.write("Buy/Sell signals generated by the ML model. Columns: timestamp, symbol, side, quantity, price")
-    st.write(signals_df.tail(50))
-
-# Model metrics
-st.subheader("Model Metrics (Latest)")
-if not model_meta:
-    st.info("No model metadata found in models directory.")
-else:
-    col_metrics_title, col_metrics_help = st.columns([0.93, 0.07])
-    with col_metrics_title:
-        st.markdown("**📊 Validation Metrics**")
-    with col_metrics_help:
-        with st.popover("ℹ️", use_container_width=True):
-            st.write("Performance metrics from model validation. Includes MSE, MAE, R2, and other accuracy measures.")
-    metrics = model_meta.get("metrics", {})
-    st.json(metrics)
+# TAB 1: Market Analysis
+with tab1:
+    data_source_label = f"Yahoo Finance ({symbol}) - Real-time" if use_yahoo else "Historical JSONL"
+    st.subheader(f"Market Data - {data_source_label}")
     
-    fi = model_meta.get("feature_importance", [])
-    if fi:
-        col_fi_title, col_fi_help = st.columns([0.93, 0.07])
-        with col_fi_title:
+    if market_df.empty:
+        st.info("No market data found at the provided path.")
+    else:
+        # Show data freshness
+        if not market_df.empty and hasattr(market_df.index, 'max'):
+            latest_timestamp = market_df.index.max()
+            st.caption(f"Latest data: {latest_timestamp} | Total bars: {len(market_df):,}")
+        
+        # Close price chart
+        col_title_price, col_help_price = st.columns([0.93, 0.07])
+        with col_title_price:
+            st.markdown("**📈 Closing Price Over Time**")
+        with col_help_price:
+            with st.popover("ℹ️", use_container_width=True):
+                st.write("Historical closing prices. Use for trend analysis and price movement identification.")
+        
+        # Calculate ATL and ATH for closing prices
+        close_min = market_df["close"].min()
+        close_max = market_df["close"].max()
+        close_range = close_max - close_min
+        y_min = close_min - (close_range * 0.02)
+        y_max = close_max + (close_range * 0.02)
+        
+        fig_close = go.Figure()
+        fig_close.add_trace(go.Scatter(x=market_df.index, y=market_df["close"], mode='lines', name='Close Price', line=dict(color='#1f77b4', width=2)))
+        fig_close.update_layout(height=400, yaxis_range=[y_min, y_max], xaxis_title="Time", yaxis_title="Price ($)", showlegend=False, template="plotly_white")
+        st.plotly_chart(fig_close, use_container_width=True)
+        
+        # Volume chart
+        col_title_vol, col_help_vol = st.columns([0.93, 0.07])
+        with col_title_vol:
+            st.markdown("**📊 Trading Volume**")
+        with col_help_vol:
+            with st.popover("ℹ️", use_container_width=True):
+                st.write("Trading volume indicates liquidity and market interest. Higher volume = stronger moves.")
+        
+        volume_data = market_df["volume"].tail(200)
+        vol_max = volume_data.max()
+        
+        fig_vol = go.Figure()
+        fig_vol.add_trace(go.Bar(x=volume_data.index, y=volume_data, name='Volume', marker_color='#ff7f0e'))
+        fig_vol.update_layout(height=300, yaxis_range=[0, vol_max * 1.05], xaxis_title="Time", yaxis_title="Volume", showlegend=False, template="plotly_white")
+        st.plotly_chart(fig_vol, use_container_width=True)
+        
+        # Returns statistics
+        if "close" in market_df.columns:
+            returns = market_df["close"].pct_change().dropna()
+            col_stats1, col_stats2, col_stats3 = st.columns(3)
+            with col_stats1:
+                st.metric("📈 Mean Return", f"{returns.mean():.6f}")
+            with col_stats2:
+                st.metric("📊 Volatility", f"{returns.std():.6f}")
+            with col_stats3:
+                sharpe_est = (returns.mean() / returns.std() * np.sqrt(252)) if returns.std() > 0 else 0
+                st.metric("⚡ Sharpe (Est)", f"{sharpe_est:.2f}")
+
+# TAB 2: Signals & Model
+with tab2:
+    st.subheader("🎯 Signals")
+    if signals_df.empty:
+        st.info("No signals loaded. Generate signals using the signal generator.")
+        st.code(f"python scripts/generate_sample_signals.py --strategy {st.session_state.selected_strategy}", language="bash")
+    else:
+        col_sig_title, col_sig_help = st.columns([0.93, 0.07])
+        with col_sig_title:
+            st.markdown(f"**Trade Signals Overview (Total: {len(signals_df)})**")
+        with col_sig_help:
+            with st.popover("ℹ️", use_container_width=True):
+                st.write("Buy/Sell signals generated by the strategy. Columns: timestamp, symbol, side, quantity, price")
+        
+        # Show signal statistics
+        if 'side' in signals_df.columns:
+            buy_count = (signals_df['side'] == 'BUY').sum()
+            sell_count = (signals_df['side'] == 'SELL').sum()
+            col_s1, col_s2, col_s3 = st.columns(3)
+            with col_s1:
+                st.metric("🟢 Buy Signals", buy_count)
+            with col_s2:
+                st.metric("🔴 Sell Signals", sell_count)
+            with col_s3:
+                ratio = buy_count / sell_count if sell_count > 0 else 0
+                st.metric("📊 Buy/Sell Ratio", f"{ratio:.2f}")
+        
+        # Display recent signals
+        st.markdown("**Recent Signals (Last 50)**")
+        display_df = signals_df.tail(50).copy()
+        if 'timestamp' in display_df.columns:
+            display_df = display_df.sort_values('timestamp', ascending=False)
+        st.dataframe(display_df, use_container_width=True, height=400)
+    
+    st.divider()
+    
+    # Model metrics
+    st.subheader("🎓 Model Metrics (Latest)")
+    if not model_meta:
+        st.info("No model metadata found in models directory.")
+    else:
+        col_metrics_title, col_metrics_help = st.columns([0.93, 0.07])
+        with col_metrics_title:
+            st.markdown("**Validation Metrics**")
+        with col_metrics_help:
+            with st.popover("ℹ️", use_container_width=True):
+                st.write("Performance metrics from model validation.")
+        
+        metrics = model_meta.get("metrics", {})
+        if metrics:
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            with col_m1:
+                st.metric("MSE", f"{metrics.get('avg_val_mse', 0):.6f}")
+            with col_m2:
+                st.metric("MAE", f"{metrics.get('avg_val_mae', 0):.6f}")
+            with col_m3:
+                st.metric("R²", f"{metrics.get('avg_val_r2', 0):.4f}")
+            with col_m4:
+                st.metric("RMSE", f"{np.sqrt(metrics.get('avg_val_mse', 0)):.6f}")
+        
+        fi = model_meta.get("feature_importance", [])
+        if fi:
             st.markdown("**🎯 Feature Importance**")
-        with col_fi_help:
-            with st.popover("ℹ️", use_container_width=True):
-                st.write("Relative importance of features for price prediction. Sorted by importance (highest first).")
-        fi_df = pd.DataFrame(fi)
-        fi_df = fi_df.sort_values("importance", ascending=False)
-        # Calculate y-axis range for feature importance
-        fi_min = fi_df["importance"].min()
-        fi_max = fi_df["importance"].max()
-        fi_range = fi_max - fi_min
-        fi_y_min = max(0, fi_min - (fi_range * 0.02))  # Don't go below 0
-        fi_y_max = fi_max + (fi_range * 0.02)
-        
-        fig_fi = go.Figure()
-        fig_fi.add_trace(go.Bar(x=fi_df["feature"], y=fi_df["importance"], name='Importance'))
-        fig_fi.update_layout(height=400, yaxis_range=[fi_y_min, fi_y_max], xaxis_title="Feature", yaxis_title="Importance", showlegend=False)
-        st.plotly_chart(fig_fi, use_container_width=True)
-    st.caption(f"Metadata file: {model_meta.get('_path', 'N/A')}")
-
-# Backtest quick view
-st.subheader("Quick Backtest (using current signals)")
-if signals_df.empty:
-    st.info("Load signals to run quick backtest.")
-else:
-    # Use signal prices if available; otherwise, align to market close series
-    if "price" in signals_df.columns:
-        prices = signals_df["price"].astype(float).tolist()
-    elif not market_df.empty and "close" in market_df.columns:
-        prices = market_df["close"].iloc[: len(signals_df)].tolist()
-    else:
-        prices = []
-
-    bt = run_quick_backtest(signals_df, prices, initial_cash)
-    if not bt:
-        st.info("Unable to run backtest (missing prices).")
-    else:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total P&L", f"${bt['total_pnl']:.2f}", help="Net profit/loss from the backtest")
-        c2.metric("Return", f"{bt['total_return_pct']:.2f}%", help="Total percentage return on initial capital")
-        c3.metric("Sharpe", f"{bt['sharpe']:.3f}", help="Risk-adjusted return ratio (higher is better)")
-        
-        col_dd1, col_dd2 = st.columns(2)
-        with col_dd1:
-            st.metric("Max Drawdown", f"{bt['max_drawdown']:.2f}%", help="Largest peak-to-trough decline during backtest")
-        with col_dd2:
-            st.metric("Total Trades", f"{len(signals_df)}", help="Number of buy/sell signals executed")
-        
-        col_eq_title, col_eq_help = st.columns([0.93, 0.07])
-        with col_eq_title:
-            st.markdown("**💰 Equity Curve (Backtest)**")
-        with col_eq_help:
-            with st.popover("ℹ️", use_container_width=True):
-                st.write("Portfolio value over time. Shows cumulative performance from initial capital.")
-        equity_series = pd.Series(bt["equity"], name="Equity")
-        # Calculate range for equity curve
-        eq_min = equity_series.min()
-        eq_max = equity_series.max()
-        eq_range = eq_max - eq_min
-        eq_y_min = eq_min - (eq_range * 0.02)
-        eq_y_max = eq_max + (eq_range * 0.02)
-        
-        fig_bt = go.Figure()
-        fig_bt.add_trace(go.Scatter(x=list(range(len(equity_series))), y=equity_series, mode='lines', name='Equity'))
-        fig_bt.update_layout(height=400, yaxis_range=[eq_y_min, eq_y_max], xaxis_title="Trade #", yaxis_title="Equity ($)", showlegend=False)
-        st.plotly_chart(fig_bt, use_container_width=True)
-
-# Live Trading view (Real-time with MTM updates)
-st.subheader("📈 Live Trading (Real-time with Tick-by-tick Updates)")
-
-# Add input for live trading equity log path
-col_live1, col_live2 = st.columns([3, 1])
-with col_live1:
-    live_trading_equity_log = st.text_input(
-        "Live Trading Equity Log",
-        value="data/live_trading_equity.jsonl",
-        help="Path to live trading equity updates (auto-refreshed every second)"
-    )
-with col_live2:
-    refresh_interval = st.selectbox("Refresh", options=["1s", "2s", "5s"], index=0)
-
-live_trading_equity_path = Path(live_trading_equity_log)
-
-# Load live trading data without caching for real-time updates
-def load_live_trading_data():
-    """Load live trading equity log with real-time updates."""
-    if live_trading_equity_path.exists():
-        return load_jsonl(live_trading_equity_path)
-    return []
-
-def load_live_trading_trades():
-    """Load executed trades with real-time updates."""
-    trades_path = Path("data/live_trading_trades.jsonl")
-    if trades_path.exists():
-        return load_jsonl(trades_path)
-    return []
-
-live_equity_records = load_live_trading_data()
-live_trades = load_live_trading_trades()
-
-if live_equity_records:
-    lt_df = pd.DataFrame(live_equity_records)
-    lt_df["timestamp"] = pd.to_datetime(lt_df["timestamp"], errors="coerce")
-    lt_df = lt_df.set_index("timestamp")
-    
-    # Calculate metrics
-    initial_pv = lt_df["portfolio_value"].iloc[0]
-    current_pv = lt_df["portfolio_value"].iloc[-1]
-    live_pnl = current_pv - initial_pv
-    live_return_pct = (live_pnl / initial_pv) * 100
-    
-    # Current status
-    latest_update = lt_df.iloc[-1]
-    last_update_time = lt_df.index[-1]
-    
-    # Metrics row
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("🎯 Current PV", f"${current_pv:,.2f}", delta=f"${live_pnl:,.2f}")
-    m2.metric("📊 Return %", f"{live_return_pct:+.2f}%")
-    m3.metric("💹 Trades", f"{len(live_trades)}", help=f"Algorithmic executions")
-    
-    # Status indicator
-    status_icon = "🟢" if live_return_pct > 0 else "🔴"
-    status_text = "Profitable" if live_return_pct > 0 else "Loss"
-    m4.metric(f"{status_icon} Status", status_text)
-    
-    # Last update
-    m5.metric("⏱️ Last Update", last_update_time.strftime("%H:%M:%S"))
-    
-    # Real-time equity curve with MTM on every tick
-    col_title, col_pop = st.columns([0.93, 0.07])
-    with col_title:
-        st.markdown("**📈 Equity Curve (Real-time MTM)**")
-    with col_pop:
-        with st.popover("ℹ️", use_container_width=True):
-            st.write("Portfolio value updated tick-by-tick with mark-to-market pricing. Green = profit, Red = loss.")
-    chart_data = lt_df[["portfolio_value"]].copy()
-    chart_data.columns = ["Portfolio Value"]
-    
-    # Calculate ATL and ATH for portfolio value
-    pv_min = chart_data["Portfolio Value"].min()
-    pv_max = chart_data["Portfolio Value"].max()
-    pv_range = pv_max - pv_min
-    pv_y_min = pv_min - (pv_range * 0.02)
-    pv_y_max = pv_max + (pv_range * 0.02)
-    
-    fig_live = go.Figure()
-    fig_live.add_trace(go.Scatter(x=chart_data.index, y=chart_data["Portfolio Value"], mode='lines', name='Portfolio Value'))
-    fig_live.update_layout(height=500, yaxis_range=[pv_y_min, pv_y_max], xaxis_title="Time", yaxis_title="Portfolio Value ($)", showlegend=False)
-    st.plotly_chart(fig_live, use_container_width=True)
-    
-    # Recent trades table
-    if live_trades:
-        col_trades_title, col_trades_pop = st.columns([0.93, 0.07])
-        with col_trades_title:
-            st.markdown("**📋 Recent Algorithmic Trades**")
-        with col_trades_pop:
-            with st.popover("ℹ️", use_container_width=True):
-                st.write("Last 10 executed trades with timestamps, symbols, sides (BUY/SELL), quantities, fill prices, and status.")
-        trades_df = pd.DataFrame(live_trades[-10:])  # Last 10 trades
-        if "timestamp" in trades_df.columns:
-            trades_df["timestamp"] = pd.to_datetime(trades_df["timestamp"], errors="coerce")
-            # Handle column name variations (qty/quantity, filled_price/price)
-            cols_to_select = []
-            for col in ["timestamp", "symbol", "side"]:
-                if col in trades_df.columns:
-                    cols_to_select.append(col)
-            if "qty" in trades_df.columns:
-                cols_to_select.append("qty")
-            elif "quantity" in trades_df.columns:
-                cols_to_select.append("quantity")
-            if "filled_price" in trades_df.columns:
-                cols_to_select.append("filled_price")
-            elif "price" in trades_df.columns:
-                cols_to_select.append("price")
-            if "status" in trades_df.columns:
-                cols_to_select.append("status")
+            fi_df = pd.DataFrame(fi)
+            fi_df = fi_df.sort_values("importance", ascending=False).head(15)
             
-            trades_df = trades_df[cols_to_select]
-            # Rename columns for display
-            rename_map = {"timestamp": "Time", "symbol": "Symbol", "side": "Side", 
-                         "qty": "Qty", "quantity": "Qty", "filled_price": "Fill Price", 
-                         "price": "Price", "status": "Status"}
-            trades_df.columns = [rename_map.get(col, col) for col in trades_df.columns]
-            st.dataframe(trades_df, use_container_width=True, height=250)
-        st.caption(f"Total trades executed: {len(live_trades)}")
-    
-    # Update frequency indicator
-    st.info(f"🔄 Auto-refreshing every second | {len(live_equity_records)} equity snapshots recorded | Last: {latest_update.get('update_type', 'TICK')}")
-    
-else:
-    st.warning("⚠️ Live trading not started or no data yet.")
-    st.markdown("**To start live trading:**")
-    st.code(
-        "# Terminal 1: Start live trading engine\n"
-        "python scripts/run_live_trading.py --market-data data/market_data.jsonl --signals data/signals.jsonl\n\n"
-        "# Terminal 2: Start dashboard (it will auto-refresh)\n"
-        "streamlit run dashboard/app.py",
-        language="bash"
-    )
-    st.markdown("The live trading engine will:")
-    st.markdown("- Process market data **tick-by-tick**")
-    st.markdown("- Execute signals **algorithmically inline** with price updates")
-    st.markdown("- Update equity on **every price movement** (MTM)")
-    st.markdown("- Stream results to `live_trading_equity.jsonl` (auto-refreshed here)")
-
-# Backtest vs Live Trading Comparison
-st.markdown("---")
-col_cmp_title, col_cmp_pop = st.columns([0.93, 0.07])
-with col_cmp_title:
-    st.subheader("📋 Backtest vs Live Trading Comparison")
-with col_cmp_pop:
-    with st.popover("ℹ️", use_container_width=True):
-        st.write("Compare historical backtesting performance (ideal market conditions) vs real-time live trading (with slippage, fill delays, and realistic fills).")
-
-if "bt" in locals() and bt and live_equity_records:
-    st.divider()
-    st.subheader("📊 Backtest vs Live Trading Comparison")
-    
-    cmp_col1, cmp_col2, cmp_col3 = st.columns(3)
-    
-    with cmp_col1:
-        st.markdown("### 📈 Backtest (Ideal Conditions)")
-        col_m1, col_m2 = st.columns(2)
-        with col_m1:
-            st.metric("Return %", f"{bt['total_return_pct']:.2f}%", help="Total % return on backtest period")
-        with col_m2:
-            st.metric("Sharpe", f"{bt['sharpe']:.3f}", help="Risk-adjusted return ratio")
-        st.metric("Max DD %", f"{bt['max_drawdown']:.2f}%", help="Largest peak-to-trough drawdown")
-    
-    with cmp_col2:
-        st.markdown("### 🟢 Live Trading (Real Conditions)")
-        col_m3, col_m4 = st.columns(2)
-        with col_m3:
-            st.metric("Return %", f"{live_return_pct:.2f}%", help="Live return with slippage/fills")
-        with col_m4:
-            st.metric("P&L $", f"${live_pnl:,.2f}", help="Absolute profit or loss")
-        status = "✅ Profitable" if current_pv > initial_pv else "⚠️ Below initial"
-        st.metric("Status", status, help="Current profitability status")
-    
-    with cmp_col3:
-        st.markdown("### 📊 Impact Analysis")
-        col_m5, col_m6 = st.columns(2)
-        with col_m5:
-            diff = live_return_pct - bt['total_return_pct']
-            st.metric("Return Diff %", f"{diff:+.2f}%", help="Performance gap (usually negative due to costs)")
-        with col_m6:
-            st.metric("Trades", len(live_trades), help="Executed via algorithmic engine")
-        diff_reason = "Slippage/fills" if diff < 0 else "Better execution"
-        st.metric("Reason", diff_reason, help="Why live trades differ from backtest")
+            fig_fi = go.Figure()
+            fig_fi.add_trace(go.Bar(x=fi_df["feature"], y=fi_df["importance"], name='Importance', marker_color='#2ca02c'))
+            fig_fi.update_layout(height=350, xaxis_title="Feature", yaxis_title="Importance", showlegend=False, template="plotly_white")
+            st.plotly_chart(fig_fi, use_container_width=True)
         
-elif live_equity_records:
-    st.divider()
-    st.info("💡 **Run backtest first** to see comparison. Live trading data is available.")
-elif "bt" in locals() and bt:
-    st.divider()
-    st.info("💡 **Live trading not started yet.** Once running, comparison will appear here.")
+        st.caption(f"Metadata file: {model_meta.get('_path', 'N/A')}")
 
-st.caption("Run via: `streamlit run dashboard/app.py`")
+# TAB 3: Live Trading
+with tab3:
+    st.subheader("📈 Live Trading Monitor")
+    
+    # Add input for live trading equity log path
+    col_live1, col_live2 = st.columns([3, 1])
+    with col_live1:
+        live_trading_equity_log = st.text_input(
+            "Live Trading Equity Log",
+            value="data/live_trading_equity.jsonl",
+            help="Path to live trading equity updates (auto-refreshed)"
+        )
+    with col_live2:
+        refresh_interval = st.selectbox("Refresh", options=["1s", "2s", "5s"], index=0)
+
+    live_trading_equity_path = Path(live_trading_equity_log)
+
+    # Load live trading data without caching for real-time updates
+    def load_live_trading_data():
+        """Load live trading equity log with real-time updates."""
+        if live_trading_equity_path.exists():
+            return load_jsonl(live_trading_equity_path)
+        return []
+    
+    def load_live_trading_trades():
+        """Load executed trades with real-time updates."""
+        trades_path = Path("data/live_trading_trades.jsonl")
+        if trades_path.exists():
+            return load_jsonl(trades_path)
+        return []
+    
+    live_equity_records = load_live_trading_data()
+    live_trades = load_live_trading_trades()
+    
+    if live_equity_records:
+        lt_df = pd.DataFrame(live_equity_records)
+        lt_df["timestamp"] = pd.to_datetime(lt_df["timestamp"], errors="coerce")
+        lt_df = lt_df.set_index("timestamp")
+        
+        # Calculate metrics
+        initial_pv = lt_df["portfolio_value"].iloc[0]
+        current_pv = lt_df["portfolio_value"].iloc[-1]
+        live_pnl = current_pv - initial_pv
+        live_return_pct = (live_pnl / initial_pv) * 100
+        
+        # Current status
+        latest_update = lt_df.iloc[-1]
+        last_update_time = lt_df.index[-1]
+        
+        # Metrics row
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("🎯 Current PV", f"${current_pv:,.2f}", delta=f"${live_pnl:,.2f}")
+        m2.metric("📊 Return %", f"{live_return_pct:+.2f}%")
+        m3.metric("💹 Trades", f"{len(live_trades)}", help=f"Algorithmic executions")
+        
+        # Status indicator
+        status_icon = "🟢" if live_return_pct > 0 else "🔴"
+        status_text = "Profitable" if live_return_pct > 0 else "Loss"
+        m4.metric(f"{status_icon} Status", status_text)
+        
+        # Last update
+        m5.metric("⏱️ Last Update", last_update_time.strftime("%H:%M:%S"))
+        
+        # Real-time equity curve with MTM on every tick
+        col_title, col_pop = st.columns([0.93, 0.07])
+        with col_title:
+            st.markdown("**📈 Equity Curve (Real-time MTM)**")
+        with col_pop:
+            with st.popover("ℹ️", use_container_width=True):
+                st.write("Portfolio value updated tick-by-tick with mark-to-market pricing.")
+        
+        chart_data = lt_df[["portfolio_value"]].copy()
+        chart_data.columns = ["Portfolio Value"]
+        
+        # Calculate ATL and ATH for portfolio value
+        pv_min = chart_data["Portfolio Value"].min()
+        pv_max = chart_data["Portfolio Value"].max()
+        pv_range = pv_max - pv_min
+        pv_y_min = pv_min - (pv_range * 0.02)
+        pv_y_max = pv_max + (pv_range * 0.02)
+        
+        # Color based on performance
+        line_color = '#2ca02c' if live_return_pct > 0 else '#d62728'
+        
+        fig_live = go.Figure()
+        fig_live.add_trace(go.Scatter(x=chart_data.index, y=chart_data["Portfolio Value"], mode='lines', name='Portfolio Value', line=dict(color=line_color, width=2)))
+        fig_live.update_layout(height=400, yaxis_range=[pv_y_min, pv_y_max], xaxis_title="Time", yaxis_title="Portfolio Value ($)", showlegend=False, template="plotly_white")
+        st.plotly_chart(fig_live, use_container_width=True)
+        
+        # Recent trades table
+        if live_trades:
+            col_trades_title, col_trades_pop = st.columns([0.93, 0.07])
+            with col_trades_title:
+                st.markdown("**📋 Recent Algorithmic Trades**")
+            with col_trades_pop:
+                with st.popover("ℹ️", use_container_width=True):
+                    st.write("Last 10 executed trades with timestamps, symbols, sides (BUY/SELL), quantities, fill prices, and status.")
+            trades_df = pd.DataFrame(live_trades[-10:])  # Last 10 trades
+            if "timestamp" in trades_df.columns:
+                trades_df["timestamp"] = pd.to_datetime(trades_df["timestamp"], errors="coerce")
+                # Handle column name variations (qty/quantity, filled_price/price)
+                cols_to_select = []
+                for col in ["timestamp", "symbol", "side"]:
+                    if col in trades_df.columns:
+                        cols_to_select.append(col)
+                if "qty" in trades_df.columns:
+                    cols_to_select.append("qty")
+                elif "quantity" in trades_df.columns:
+                    cols_to_select.append("quantity")
+                if "filled_price" in trades_df.columns:
+                    cols_to_select.append("filled_price")
+                elif "price" in trades_df.columns:
+                    cols_to_select.append("price")
+                if "status" in trades_df.columns:
+                    cols_to_select.append("status")
+                
+                trades_df = trades_df[cols_to_select]
+                # Rename columns for display
+                rename_map = {"timestamp": "Time", "symbol": "Symbol", "side": "Side", 
+                             "qty": "Qty", "quantity": "Qty", "filled_price": "Fill Price", 
+                             "price": "Price", "status": "Status"}
+                trades_df.columns = [rename_map.get(col, col) for col in trades_df.columns]
+                st.dataframe(trades_df, use_container_width=True, height=250)
+            st.caption(f"Total trades executed: {len(live_trades)}")
+        
+        # Update frequency indicator
+        st.info(f"🔄 Auto-refreshing | {len(live_equity_records)} snapshots | Last: {latest_update.get('update_type', 'TICK')}")
+    
+    else:
+        st.warning("⚠️ Live trading not started or no data yet.")
+        st.markdown("**To start live trading:**")
+        st.code(
+            f"# Start trading with {st.session_state.selected_strategy} strategy\n"
+            f"python scripts/run_continuous_trading.py --symbol {symbol} --strategy {st.session_state.selected_strategy}",
+            language="bash"
+        )
+        st.markdown("The live trading engine will:")
+        st.markdown("- Process market data **tick-by-tick**")
+        st.markdown("- Execute signals **algorithmically**")
+        st.markdown("- Update equity with **real-time MTM**")
+
+# TAB 4: Performance Analysis
+with tab4:
+    st.subheader("📊 Performance Analysis")
+    
+    # Backtest section
+    st.markdown("### Quick Backtest")
+    
+    if signals_df.empty:
+        st.info("Load signals to run quick backtest.")
+        st.code(f"python scripts/generate_sample_signals.py --strategy {selected_strategy}", language="bash")
+    else:
+        # Use signal prices if available; otherwise, align to market close series
+        if "price" in signals_df.columns:
+            prices = signals_df["price"].astype(float).tolist()
+        elif not market_df.empty and "close" in market_df.columns:
+            prices = market_df["close"].iloc[: len(signals_df)].tolist()
+        else:
+            prices = []
+
+        bt = run_quick_backtest(signals_df, prices, initial_cash)
+        if not bt:
+            st.info("Unable to run backtest (missing prices).")
+        else:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("💰 Total P&L", f"${bt['total_pnl']:.2f}")
+            c2.metric("📈 Return", f"{bt['total_return_pct']:.2f}%")
+            c3.metric("⚡ Sharpe", f"{bt['sharpe']:.3f}")
+            
+            col_dd1, col_dd2 = st.columns(2)
+            with col_dd1:
+                st.metric("📉 Max Drawdown", f"{bt['max_drawdown']:.2f}%")
+            with col_dd2:
+                st.metric("🎯 Total Trades", f"{len(signals_df)}")
+            
+            st.markdown("**💰 Equity Curve (Backtest)**")
+            equity_series = pd.Series(bt["equity"], name="Equity")
+            eq_min = equity_series.min()
+            eq_max = equity_series.max()
+            eq_range = eq_max - eq_min
+            eq_y_min = eq_min - (eq_range * 0.02)
+            eq_y_max = eq_max + (eq_range * 0.02)
+            
+            fig_bt = go.Figure()
+            fig_bt.add_trace(go.Scatter(x=list(range(len(equity_series))), y=equity_series, mode='lines', name='Equity', line=dict(color='#1f77b4', width=2)))
+            fig_bt.update_layout(height=350, yaxis_range=[eq_y_min, eq_y_max], xaxis_title="Trade #", yaxis_title="Equity ($)", showlegend=False, template="plotly_white")
+            st.plotly_chart(fig_bt, use_container_width=True)
+    
+    st.divider()
+    
+    # Comparison section
+    st.markdown("### 📋 Backtest vs Live Trading Comparison")
+    
+    # Load live trading data for comparison
+    live_trading_equity_path = Path("data/live_trading_equity.jsonl")
+    live_equity_records = load_jsonl(live_trading_equity_path) if live_trading_equity_path.exists() else []
+    live_trades_path = Path("data/live_trading_trades.jsonl")
+    live_trades = load_jsonl(live_trades_path) if live_trades_path.exists() else []
+    
+    if "bt" in locals() and bt and live_equity_records:
+        lt_df = pd.DataFrame(live_equity_records)
+        lt_df["timestamp"] = pd.to_datetime(lt_df["timestamp"], errors="coerce")
+        initial_pv = lt_df["portfolio_value"].iloc[0]
+        current_pv = lt_df["portfolio_value"].iloc[-1]
+        live_pnl = current_pv - initial_pv
+        live_return_pct = (live_pnl / initial_pv) * 100
+        
+        cmp_col1, cmp_col2, cmp_col3 = st.columns(3)
+        
+        with cmp_col1:
+            st.markdown("#### 📈 Backtest")
+            st.metric("Return %", f"{bt['total_return_pct']:.2f}%")
+            st.metric("Sharpe", f"{bt['sharpe']:.3f}")
+            st.metric("Max DD %", f"{bt['max_drawdown']:.2f}%")
+        
+        with cmp_col2:
+            st.markdown("#### 🟢 Live Trading")
+            st.metric("Return %", f"{live_return_pct:.2f}%")
+            st.metric("P&L $", f"${live_pnl:,.2f}")
+            status = "✅ Profitable" if current_pv > initial_pv else "⚠️ Below initial"
+            st.metric("Status", status)
+        
+        with cmp_col3:
+            st.markdown("#### 📊 Impact")
+            diff = live_return_pct - bt['total_return_pct']
+            st.metric("Return Diff", f"{diff:+.2f}%")
+            st.metric("Live Trades", len(live_trades))
+            diff_reason = "Slippage/fills" if diff < 0 else "Better execution"
+            st.metric("Reason", diff_reason)
+    elif live_equity_records:
+        st.info("💡 Run backtest first to see comparison. Live trading data is available.")
+    elif "bt" in locals() and bt:
+        st.info("💡 Live trading not started yet. Once running, comparison will appear here.")
+    else:
+        st.info("💡 Run backtest and start live trading to see performance comparison.")
+
+# Footer
+st.markdown("---")
+st.caption("🚀 MarketBoss Dashboard | Multi-Timeframe Trading System")
+
+# Live Trade Feed Section (collapsible at bottom)
+st.markdown("---")
+st.markdown("## 📡 Live Trade Feed")
+
+# Create trade feed viewer
+trade_feed_viewer = TradeFeedViewer(
+    updates_path=Path("data/live_trading_updates.jsonl"),
+    trades_path=Path("data/live_trading_trades.jsonl")
+)
+
+# Add expander for detailed view
+with st.expander("📊 View Detailed Trade Feed", expanded=False):
+    st.markdown("### Real-time Trading Activity Monitor")
+    st.markdown("View all trading updates without opening the console window.")
+    
+    # Add tabs for different views
+    feed_tab1, feed_tab2, feed_tab3 = st.tabs(["📈 Statistics", "📊 All Updates", "💹 Trades Only"])
+    
+    with feed_tab1:
+        trade_feed_viewer.render_statistics()
+    
+    with feed_tab2:
+        updates = trade_feed_viewer.load_recent_updates(limit=100)
+        
+        if not updates:
+            st.info("No trading updates available. Start trading to see live activity.")
+        else:
+            # Show update count selector
+            update_limit = st.slider("Number of updates to display", 10, 200, 50, step=10)
+            
+            # Load and display
+            updates = trade_feed_viewer.load_recent_updates(limit=update_limit)
+            df = pd.DataFrame(updates)
+            
+            # Format timestamp
+            if 'timestamp' in df.columns:
+                df['time'] = df['timestamp'].apply(trade_feed_viewer.format_timestamp)
+                df = df[['time', 'update_type', 'portfolio_value', 'cash', 'positions', 'trades_executed']]
+            
+            # Rename columns
+            df = df.rename(columns={
+                'time': 'Time',
+                'update_type': 'Type',
+                'portfolio_value': 'Portfolio ($)',
+                'cash': 'Cash ($)',
+                'positions': 'Positions',
+                'trades_executed': 'Total Trades'
+            })
+            
+            # Format currency columns
+            if 'Portfolio ($)' in df.columns:
+                df['Portfolio ($)'] = df['Portfolio ($)'].apply(lambda x: f"${x:,.2f}")
+            if 'Cash ($)' in df.columns:
+                df['Cash ($)'] = df['Cash ($)'].apply(lambda x: f"${x:,.2f}")
+            
+            # Reverse to show newest first
+            df = df.iloc[::-1].reset_index(drop=True)
+            
+            st.dataframe(df, use_container_width=True, height=400)
+    
+    with feed_tab3:
+        trades = trade_feed_viewer.load_recent_trades(limit=100)
+        
+        if not trades:
+            st.info("No trades executed yet. Start trading to see executed orders.")
+        else:
+            # Show trade count selector
+            trade_limit = st.slider("Number of trades to display", 10, 200, 50, step=10)
+            
+            # Load and display
+            trades = trade_feed_viewer.load_recent_trades(limit=trade_limit)
+            df = pd.DataFrame(trades)
+            
+            # Format columns if they exist
+            display_cols = []
+            if 'timestamp' in df.columns:
+                df['time'] = df['timestamp'].apply(trade_feed_viewer.format_timestamp)
+                display_cols.append('time')
+            
+            for col in ['symbol', 'side', 'qty', 'price', 'portfolio_value']:
+                if col in df.columns:
+                    display_cols.append(col)
+            
+            if display_cols:
+                df = df[display_cols]
+                
+                # Rename columns
+                rename_map = {
+                    'time': 'Time',
+                    'symbol': 'Symbol',
+                    'side': 'Side',
+                    'qty': 'Qty',
+                    'price': 'Price ($)',
+                    'portfolio_value': 'Portfolio ($)'
+                }
+                df = df.rename(columns=rename_map)
+                
+                # Format currency
+                if 'Price ($)' in df.columns:
+                    df['Price ($)'] = df['Price ($)'].apply(lambda x: f"${x:,.2f}")
+                if 'Portfolio ($)' in df.columns:
+                    df['Portfolio ($)'] = df['Portfolio ($)'].apply(lambda x: f"${x:,.2f}")
+                
+                # Reverse to show newest first
+                df = df.iloc[::-1].reset_index(drop=True)
+                
+                st.dataframe(df, use_container_width=True, height=400)
 
 # Auto-refresh the dashboard every 2 seconds when live trading is active
 if live_equity_records:

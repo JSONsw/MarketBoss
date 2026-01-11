@@ -1,0 +1,13 @@
+{
+  "last_updated": "2026-01-11T15:39:41.299485+00:00",
+  "cash": 92995.16077924827,
+  "portfolio_value": 99923.70750562896,
+  "positions": {
+    "SPY": {
+      "qty": 10,
+      "avg_price": 694.0
+    }
+  },
+  "trades_count": 10,
+  "session_count": 10
+}

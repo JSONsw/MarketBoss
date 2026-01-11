@@ -11,8 +11,10 @@ flake8
 tenacity
 pytest-mock
 python-dotenv
-alpaca-trade-api
 streamlit
 yfinance
 plotly
 pytz
+
+# Optional: Only needed for Alpaca paper trading (deprecated - use yfinance instead)
+# alpaca-trade-api

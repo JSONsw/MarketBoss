@@ -42,10 +42,26 @@ def test_integration_valid_data(fetcher, mocker, valid_response):
     """
     Verify MarketFetcher and validation pipeline with valid data.
     """
-    mocker.patch("requests.get", return_value=valid_response)
+    from datetime import datetime, timedelta
+    import pandas as pd
+    
+    # Mock yfinance to return valid data
+    mock_df = pd.DataFrame({
+        'Open': [100.0],
+        'High': [110.0],
+        'Low': [99.0],
+        'Close': [105.0],
+        'Volume': [10000]
+    }, index=pd.DatetimeIndex(['2025-01-01 00:00:00'], name='Datetime'))
+    
+    mock_ticker = mocker.Mock()
+    mock_ticker.history.return_value = mock_df
+    mocker.patch('yfinance.Ticker', return_value=mock_ticker)
 
     # Fetch data
-    data = fetcher.fetch_intraday(SYMBOL, interval="1min")
+    start = (datetime.now() - timedelta(days=1)).isoformat()
+    end = datetime.now().isoformat()
+    data = fetcher.fetch_intraday(SYMBOL, start=start, end=end, interval="1m")
     assert data is not None
     assert isinstance(data, list)
 
@@ -62,25 +78,34 @@ def test_integration_empty_data(fetcher, mocker):
     """
     Verify how the pipeline handles empty API responses.
     """
-    empty_response = Mock()
-    empty_response.status_code = 200
-    empty_response.json.return_value = {"Time Series (1min)": {}}
-    mocker.patch("requests.get", return_value=empty_response)
+    from datetime import datetime, timedelta
+    import pandas as pd
+    
+    # Mock empty DataFrame from yfinance
+    mock_ticker = mocker.Mock()
+    mock_ticker.history.return_value = pd.DataFrame()
+    mocker.patch('yfinance.Ticker', return_value=mock_ticker)
 
-    data = fetcher.fetch_intraday(SYMBOL, interval="1min")
-    assert data == [], "The system should return an empty list for no data."
+    start = (datetime.now() - timedelta(days=1)).isoformat()
+    end = datetime.now().isoformat()
+    data = fetcher.fetch_intraday(SYMBOL, start=start, end=end, interval="1m")
+    assert data is None, "The system should return None for no data."
 
 
 def test_integration_invalid_data(fetcher, mocker):
     """
     Verify how the pipeline handles invalid API responses.
     """
-    invalid_response = Mock()
-    invalid_response.status_code = 200
-    invalid_response.json.return_value = {"foo": "bar"}
-    mocker.patch("requests.get", return_value=invalid_response)
+    from datetime import datetime, timedelta
+    
+    # Mock yfinance to raise an exception
+    mock_ticker = mocker.Mock()
+    mock_ticker.history.side_effect = Exception("API error")
+    mocker.patch('yfinance.Ticker', return_value=mock_ticker)
 
-    data = fetcher.fetch_intraday(SYMBOL, interval="1min")
+    start = (datetime.now() - timedelta(days=1)).isoformat()
+    end = datetime.now().isoformat()
+    data = fetcher.fetch_intraday(SYMBOL, start=start, end=end, interval="1m")
     assert data is None, "The system should return None for invalid data."
 
 

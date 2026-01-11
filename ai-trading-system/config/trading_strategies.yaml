@@ -1,0 +1,115 @@
+# Trading Strategy Configurations
+# Each strategy defines timeframe, parameters, and risk settings
+
+strategies:
+  # Intraday strategy (current default)
+  intraday:
+    name: "Intraday Scalping"
+    description: "Fast MA crossover on 5-minute bars for same-day trading"
+    timeframe:
+      data_interval: "5m"           # 5-minute bars from Yahoo Finance
+      lookback_days: 7                # How many days of history to fetch
+      ma_fast_period: 5               # Fast moving average period
+      ma_slow_period: 20              # Slow moving average period
+    execution:
+      min_cooldown_minutes: 5         # Minimum time between trades (5 min)
+      max_holding_hours: 6            # Maximum position hold time (intraday)
+      position_exit_before_close: 30  # Close positions 30 min before market close
+    risk:
+      min_confidence: 0.60            # Minimum signal confidence (60%)
+      min_profit_bp: 3.0              # Minimum expected profit (3 basis points)
+      risk_percent: 1.0               # Risk 1% of portfolio per trade
+      max_positions: 3                # Maximum concurrent positions
+    description_detail: |
+      Intraday scalping strategy using 5-period vs 20-period MA crossover.
+      Designed for quick trades with tight stops. Exits all positions before market close.
+  
+  # Swing trading strategy (multi-day holds)
+  swing:
+    name: "Swing Trading"
+    description: "MA crossover on 1-hour bars for multi-day positions"
+    timeframe:
+      data_interval: "1h"             # 1-hour bars
+      lookback_days: 60               # 60 days of history
+      ma_fast_period: 10              # Fast MA (10 hours ≈ 1.25 trading days)
+      ma_slow_period: 50              # Slow MA (50 hours ≈ 6.25 trading days)
+    execution:
+      min_cooldown_minutes: 360       # 6 hours between trades (1 trading day)
+      max_holding_hours: 120          # Up to 5 days (15 trading days)
+      position_exit_before_close: 0   # Can hold overnight
+    risk:
+      min_confidence: 0.65            # Higher confidence for longer holds
+      min_profit_bp: 10.0             # Target 10bp per trade
+      risk_percent: 2.0               # Risk 2% per trade (longer timeframe)
+      max_positions: 5                # More positions (diversification)
+    description_detail: |
+      Swing trading strategy holds positions for days/weeks. Uses 10-hour vs 50-hour
+      MA crossover. Suitable for capturing medium-term trends.
+  
+  # Weekly position trading
+  weekly:
+    name: "Weekly Position Trading"
+    description: "MA crossover on daily bars for weekly rebalancing"
+    timeframe:
+      data_interval: "1d"             # Daily bars
+      lookback_days: 180              # 6 months of history
+      ma_fast_period: 5               # Fast MA (5 days = 1 week)
+      ma_slow_period: 20              # Slow MA (20 days = 1 month)
+    execution:
+      min_cooldown_minutes: 10080     # 1 week (7 days * 24 hours * 60 min)
+      max_holding_hours: 720          # Up to 1 month (30 days)
+      position_exit_before_close: 0   # Can hold long-term
+    risk:
+      min_confidence: 0.70            # Even higher confidence for weekly
+      min_profit_bp: 25.0             # Target 25bp+ per trade
+      risk_percent: 3.0               # Risk 3% (longer holding period)
+      max_positions: 8                # More diversification
+    description_detail: |
+      Weekly rebalancing strategy using daily bars. Trades once a week or less.
+      5-day vs 20-day MA crossover captures weekly/monthly trends.
+  
+  # Monthly position trading
+  monthly:
+    name: "Monthly Position Trading"
+    description: "MA crossover on daily bars for monthly rebalancing"
+    timeframe:
+      data_interval: "1d"             # Daily bars (monthly would be 1wk or 1mo)
+      lookback_days: 365              # 1 year of history
+      ma_fast_period: 20              # Fast MA (20 days = 1 month)
+      ma_slow_period: 60              # Slow MA (60 days = 3 months)
+    execution:
+      min_cooldown_minutes: 43200     # 1 month (30 days * 24 hours * 60 min)
+      max_holding_hours: 2160         # Up to 3 months (90 days)
+      position_exit_before_close: 0   # Long-term holds
+    risk:
+      min_confidence: 0.75            # Highest confidence for long-term
+      min_profit_bp: 50.0             # Target 50bp+ per trade
+      risk_percent: 5.0               # Risk 5% (longest timeframe)
+      max_positions: 10               # Maximum diversification
+    description_detail: |
+      Monthly rebalancing strategy for long-term trend following.
+      20-day vs 60-day MA crossover. Trades once a month or less.
+      Suitable for retirement/passive portfolios.
+
+# Default strategy to use if none specified
+default_strategy: intraday
+
+# Strategy comparison matrix
+comparison:
+  timeframe_comparison:
+    intraday:
+      typical_trade_duration: "5 minutes - 6 hours"
+      trades_per_week: "10-50"
+      data_requirements: "7 days of 5m bars"
+    swing:
+      typical_trade_duration: "1 day - 5 days"
+      trades_per_week: "2-10"
+      data_requirements: "60 days of 1h bars"
+    weekly:
+      typical_trade_duration: "1 week - 1 month"
+      trades_per_week: "0-2"
+      data_requirements: "180 days of daily bars"
+    monthly:
+      typical_trade_duration: "1 month - 3 months"
+      trades_per_week: "0-1"
+      data_requirements: "365 days of daily bars"

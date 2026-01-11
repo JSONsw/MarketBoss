@@ -87,13 +87,32 @@ def main():
     parser = argparse.ArgumentParser(description="Generate sample signals for backtesting")
     parser.add_argument("--data", default="data/market_data.jsonl", help="Path to market data JSONL")
     parser.add_argument("--output", default="signals.jsonl", help="Output signals file (JSONL)")
-    parser.add_argument("--fast", type=int, default=5, help="Fast MA window")
-    parser.add_argument("--slow", type=int, default=20, help="Slow MA window")
+    parser.add_argument("--strategy", choices=["intraday", "swing", "weekly", "monthly"], 
+                       help="Use predefined strategy config (overrides --fast/--slow)")
+    parser.add_argument("--fast", type=int, help="Fast MA window (default: 5 for manual, or from strategy)")
+    parser.add_argument("--slow", type=int, help="Slow MA window (default: 20 for manual, or from strategy)")
     parser.add_argument("--qty", type=float, default=10.0, help="Order quantity per signal")
     args = parser.parse_args()
 
+    # Load strategy config if specified
+    if args.strategy:
+        import sys
+        sys.path.append(str(Path(__file__).parent.parent))
+        from src.execution.strategy_config import load_strategy
+        
+        strategy = load_strategy(args.strategy)
+        fast = strategy.ma_fast_period
+        slow = strategy.ma_slow_period
+        print(f"📊 Using '{strategy.name}' strategy")
+        print(f"   Timeframe: {strategy.data_interval} bars")
+        print(f"   MA periods: {fast} (fast) / {slow} (slow)")
+    else:
+        fast = args.fast if args.fast is not None else 5
+        slow = args.slow if args.slow is not None else 20
+        print(f"📊 Using manual MA periods: {fast} (fast) / {slow} (slow)")
+
     df = load_market_data(args.data)
-    signals = generate_signals(df, args.fast, args.slow, args.qty)
+    signals = generate_signals(df, fast, slow, args.qty)
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -104,7 +123,7 @@ def main():
     print(f"✓ Generated {len(signals)} signals")
     print(f"  Input data: {args.data}")
     print(f"  Output: {args.output}")
-    print(f"  Strategy: MA crossover (fast={args.fast}, slow={args.slow}, qty={args.qty})")
+    print(f"  Strategy: MA crossover (fast={fast}, slow={slow}, qty={args.qty})")
 
 
 if __name__ == "__main__":
